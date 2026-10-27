@@ -1,0 +1,59 @@
+# 配置模板
+#
+# 用法：
+#   cp wrangler.toml.example wrangler.toml
+#   然后把下面的占位符换成你自己的值
+#
+# 真实的 wrangler.toml 已被 .gitignore 排除，不会进仓库——
+# 因为里面会填你的邮箱、KV namespace id、D1 database id。
+
+name = "oura-daily"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# 每天 01:00 UTC = 北京时间 09:00
+# 注意：Cloudflare Cron 只认 UTC，不要写北京时间
+[triggers]
+crons = ["0 1 * * *"]
+
+[vars]
+# 收件邮箱，多个地址用逗号分隔
+TO_EMAIL = "you@example.com"
+
+# 发件人。两个坑：
+#   1. 显示名是中文时**必须用引号包起来**，否则 Resend 解析 from 头失败，
+#      会退回测试模式报「只能发给注册邮箱」，看起来像域名没验证好
+#   2. 发件域必须已在 Resend 完成 SPF/DKIM 验证
+FROM_EMAIL = "\"Oura 日报\" <daily@your-domain.com>"
+
+# 报告按哪个时区算「今天」
+REPORT_TZ = "Asia/Shanghai"
+
+# Worker 的公开地址，用于在告警邮件里拼出「去授权」按钮
+# 部署后会得到一个 https://oura-daily.<你的子域>.workers.dev
+PUBLIC_ORIGIN = "https://oura-daily.your-subdomain.workers.dev"
+
+# OAuth 令牌存在 KV 里：access_token 会过期，靠 refresh_token 自动续期
+# 执行 npx wrangler kv namespace create OURA_KV，把输出的 id 填到这里
+# 注意 binding 必须是 KV（不是 OURA_KV），代码里用的是 env.KV
+[[kv_namespaces]]
+binding = "KV"
+id = "00000000000000000000000000000000"
+
+# 历史数据缓存：每天把拉到的原始记录落库，周报/月报直接从库里取
+# 执行 npx wrangler d1 create oura-db，把输出的 database_id 填到这里
+# 填好后执行 npx wrangler d1 migrations apply oura-db --remote 建表
+[[d1_databases]]
+binding = "DB"
+database_name = "oura-db"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true
+
+# 密钥不放这里，用 wrangler secret put 写入：
+#   OURA_CLIENT_ID      Oura 应用的 Client ID
+#   OURA_CLIENT_SECRET  Oura 应用的 Client Secret
+#   RESEND_API_KEY      Resend API Key
+#   DEBUG_KEY           调试接口与 OAuth state 的口令

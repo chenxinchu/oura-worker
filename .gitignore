@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+
+# 本地真实配置：含你的邮箱、KV / D1 id，不入库
+# 上传的是 wrangler.toml.example，clone 后 cp 一份再填值
+wrangler.toml
+
+# 与项目无关的截图，别上传
+image.png
+
+# 预览产物，每次 npm run preview 重新生成
+test/*.html
+test/*.txt

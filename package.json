@@ -1,0 +1,16 @@
+{
+  "name": "oura-daily",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Oura 健康日报：Cloudflare Worker 定时拉取 Oura 数据，渲染成邮件并发送",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "preview": "node test/preview.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
