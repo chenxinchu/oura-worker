@@ -579,6 +579,30 @@ export default {
             hrv: p.detail ? p.detail.average_hrv : null,
             total_sleep: p.detail ? p.detail.total_sleep_duration : null,
             trend_days_with_data: p.trend.filter((x) => typeof x.sleep === 'number').length,
+            // 排查「对比数据和预览不一致」用：把基准日和每一项的 cur/prev 摊开
+            act_day: p.act_day,
+            prev_day: p.prev_day,
+            prev_act_day: p.prev_act_day,
+            cmp: p.cmp,
+            // raw 里到底有哪些天的记录（day → 条数、关键值），排查「宽窄窗口不一致」
+            sleep_records: (col.raw.sleep || []).reduce((acc, s) => {
+              const d = s && s.day;
+              if (!d) return acc;
+              const cur = acc[d] || { n: 0, max: 0 };
+              cur.n += 1;
+              cur.max = Math.max(cur.max, s.total_sleep_duration || 0);
+              acc[d] = cur;
+              return acc;
+            }, {}),
+            act_days: (col.raw.daily_activity || []).reduce((acc, a) => {
+              const d = a && a.day;
+              if (!d) return acc;
+              const cur = acc[d] || { n: 0, steps: 0 };
+              cur.n += 1;
+              cur.steps = Math.max(cur.steps, a.steps || 0);
+              acc[d] = cur;
+              return acc;
+            }, {}),
           });
         } else {
           const p = buildPeriodPayload(col.raw, kind, today);
@@ -630,7 +654,10 @@ export default {
       if (auth.error) return json({ ok: false, error: auth.error }, 400);
 
       const cold = await readRange(env, start, to);
-      const missing = missingDays(cold.synced, start, to);
+      // force=1：无视 sync_day，整段重新拉一遍。
+      // 取数逻辑改过（比如 sleep 端点窗口修正）之后，用它修已经入库的脏数据。
+      const force = url.searchParams.get('force') === '1';
+      const missing = force ? missingDays(new Set(), start, to) : missingDays(cold.synced, start, to);
       if (!missing.length) {
         return json({ ok: true, range: `${start}~${to}`, missing_days: 0, note: '这段已经全部在库里了' });
       }

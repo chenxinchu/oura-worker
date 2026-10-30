@@ -28,7 +28,8 @@ const checks = (label, html) => {
 };
 
 // ---- 日报 ----
-const rawDaily = demoRaw(7, today);
+// 演示数据要比趋势窗口多两天：活动整体滞后一天，它的「7 日均值」还要再往前一天
+const rawDaily = demoRaw(9, today);
 const p = buildPayload(rawDaily, 7, today);
 const daily = renderEmail(p);
 out('preview.html', daily.html);

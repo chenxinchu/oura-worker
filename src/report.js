@@ -78,6 +78,17 @@ function mainSleep(sleeps, day) {
   return pool.reduce((a, b) => ((b.total_sleep_duration || 0) > (a.total_sleep_duration || 0) ? b : a), pool[0]);
 }
 
+// 严格版：只认这一天的记录，查不到就返回空对象。
+// mainSleep 有「退到最近一条」的兜底，做对比时不能用它 ——
+// 否则昨天没戴戒指会拿到前天的数据，算出一个假的变化。
+function sleepOn(sleeps, day) {
+  const cands = (sleeps || []).filter((s) => s && s.day === day);
+  if (!cands.length) return {};
+  const longs = cands.filter((s) => s.type === 'long_sleep');
+  const pool = longs.length ? longs : cands;
+  return pool.reduce((a, b) => ((b.total_sleep_duration || 0) > (a.total_sleep_duration || 0) ? b : a), pool[0]);
+}
+
 const STRESS_CN = { restored: '恢复充足', normal: '正常', stressful: '压力偏高', unknown: '—' };
 const RESIL_CN = { limited: '有限', adequate: '尚可', solid: '稳定', strong: '强', exceptional: '极佳' };
 
@@ -104,8 +115,10 @@ export function buildPayload(raw, days, reportDay) {
   // 取今天会得到几百步，所以固定看报告日的前一天。
   const actDay = addDays(day, -1);
   const act = actByDay[actDay] || actByDay[day] || {};
-  const stress = stressByDay[day] || {};
-  const resil = resilByDay[day] || {};
+  // 压力和抗压水平也属于「一整天」的量，跟活动一样看完整日。
+  // 早上 9 点取今天只能拿到 0 点到现在这几个小时，跟「昨日」卡片标题也对不上。
+  const stress = stressByDay[actDay] || stressByDay[day] || {};
+  const resil = resilByDay[actDay] || resilByDay[day] || {};
   const spo2 = spo2ByDay[day] || {};
   const cv = cvByDay[day] || cvByDay[latestDay(cvByDay)] || {};
   const vo2 = vo2ByDay[day] || vo2ByDay[latestDay(vo2ByDay)] || {};
@@ -132,6 +145,88 @@ export function buildPayload(raw, days, reportDay) {
   const avgOf = (arr, k) => {
     const vals = arr.map((t) => t[k]).filter((v) => typeof v === 'number');
     return vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10 : null;
+  };
+
+  // ---- 较前一日 ----
+  // 每项都跟「它自己那一天」的前一天比：睡眠类比前一夜，活动类比前一日。
+  // 活动整体滞后一天，所以它的基准日比睡眠再早一天，这是对的，不是错位。
+  const prevDay = addDays(day, -1);
+  const prevActDay = addDays(actDay, -1);
+  const sPrev = sleepByDay[prevDay] || {};
+  const rPrev = readyByDay[prevDay] || {};
+  const aPrev = actByDay[prevActDay] || {};
+  const stPrev = stressByDay[prevActDay] || {};
+  const spPrev = spo2ByDay[prevDay] || {};
+  const cvPrev = cvByDay[prevDay] || {};
+  const vo2Prev = vo2ByDay[prevDay] || {};
+  const dPrev = sleepOn(raw.sleep, prevDay);
+
+  const cmp = {
+    // 顶部三大评分：用绝对分数差，不用百分比（0–100 分制下百分比不直观）
+    sleep: { cur: sleep.score, prev: sPrev.score, t: 'score', fmt: 'points', pref: 'up' },
+    readiness: { cur: ready.score, prev: rPrev.score, t: 'score', fmt: 'points', pref: 'up' },
+    activity: { cur: act.score, prev: aPrev.score, t: 'score', fmt: 'points', pref: 'up' },
+
+    // 昨夜睡眠
+    total_sleep: { cur: detail.total_sleep_duration, prev: dPrev.total_sleep_duration, t: 'dur', pref: 'up' },
+    time_in_bed: { cur: detail.time_in_bed, prev: dPrev.time_in_bed, t: 'dur', pref: 'none' },
+    deep: { cur: detail.deep_sleep_duration, prev: dPrev.deep_sleep_duration, t: 'dur', pref: 'up' },
+    rem: { cur: detail.rem_sleep_duration, prev: dPrev.rem_sleep_duration, t: 'dur', pref: 'up' },
+    efficiency: { cur: detail.efficiency, prev: dPrev.efficiency, t: 'pct', pref: 'up' },
+    latency: { cur: detail.latency, prev: dPrev.latency, t: 'dur', pref: 'down' },
+    avg_hr: { cur: detail.average_heart_rate, prev: dPrev.average_heart_rate, t: 'int', pref: 'down' },
+    hrv: { cur: detail.average_hrv, prev: dPrev.average_hrv, t: 'int', pref: 'up' },
+    low_hr: { cur: detail.lowest_heart_rate, prev: dPrev.lowest_heart_rate, t: 'int', pref: 'down' },
+    breath: { cur: detail.average_breath, prev: dPrev.average_breath, t: 'float1', pref: 'none' },
+
+    // 身体状态
+    resting_hr: {
+      cur: (ready.contributors || {}).resting_heart_rate,
+      prev: (rPrev.contributors || {}).resting_heart_rate,
+      t: 'score',
+      pref: 'up',
+    },
+    hrv_balance: {
+      cur: (ready.contributors || {}).hrv_balance,
+      prev: (rPrev.contributors || {}).hrv_balance,
+      t: 'score',
+      pref: 'up',
+    },
+    temp_dev: {
+      cur: ready.temperature_deviation,
+      prev: rPrev.temperature_deviation,
+      t: 'float1',
+      pref: 'none', // 体温偏差是「越接近 0 越好」，涨跌本身不分好坏，标灰
+    },
+    recovery_index: {
+      cur: (ready.contributors || {}).recovery_index,
+      prev: (rPrev.contributors || {}).recovery_index,
+      t: 'score',
+      pref: 'up',
+    },
+    spo2: {
+      cur: (spo2.spo2_percentage || {}).average,
+      prev: (spPrev.spo2_percentage || {}).average,
+      t: 'float1',
+      pref: 'up',
+    },
+    breathing: {
+      cur: spo2.breathing_disturbance_index,
+      prev: spPrev.breathing_disturbance_index,
+      t: 'float1',
+      pref: 'down',
+    },
+    vascular_age: { cur: cv.vascular_age, prev: cvPrev.vascular_age, t: 'int', pref: 'down' },
+    vo2max: { cur: vo2.vo2_max, prev: vo2Prev.vo2_max, t: 'float1', pref: 'up' },
+
+    // 活动与压力
+    steps: { cur: act.steps, prev: aPrev.steps, t: 'int', pref: 'up' },
+    active_cal: { cur: act.active_calories, prev: aPrev.active_calories, t: 'int', pref: 'up' },
+    total_cal: { cur: act.total_calories, prev: aPrev.total_calories, t: 'int', pref: 'up' },
+    sedentary: { cur: act.sedentary_time, prev: aPrev.sedentary_time, t: 'dur', pref: 'down' },
+    stress_high: { cur: stress.stress_high, prev: stPrev.stress_high, t: 'dur', pref: 'down' },
+    recovery_high: { cur: stress.recovery_high, prev: stPrev.recovery_high, t: 'dur', pref: 'up' },
+    // 压力概况、抗压水平是等级文字，没有数值差，不做对比
   };
 
   return {
@@ -161,6 +256,9 @@ export function buildPayload(raw, days, reportDay) {
     trend,
     trend_act: trendAct,
     act_day: actDay,
+    prev_day: prevDay,
+    prev_act_day: prevActDay,
+    cmp,
     avg: { sleep: avgOf(trend, 'sleep'), readiness: avgOf(trend, 'readiness'), activity: avgOf(trendAct, 'activity') },
   };
 }

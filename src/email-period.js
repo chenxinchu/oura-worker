@@ -14,10 +14,14 @@ import {
   bulletList,
   noticeBar,
   shell,
+  letterHead,
+  metaRow,
+  signoffRow,
 } from './ui.js';
 import { fmtVal, fmtDelta } from './period.js';
 
 const md = (day) => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
+const mdy = (day) => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}/${day.slice(0, 4)}`;
 
 // 环比箭头：跌了用红、涨了用绿；对「入睡耗时」「久坐」这类指标，
 // 方向好坏由 r.good 决定，不是单纯看涨跌
@@ -124,20 +128,15 @@ export function renderPeriodEmail(p) {
   const title = isMonth ? 'Oura 月报' : 'Oura 周报';
   const pick = (k) => p.rows.find((r) => r.k === k);
 
-  const subject = `${isMonth ? '月报' : '周报'} · 睡眠 ${
-    typeof pick('sleep').cur === 'number' ? Math.round(pick('sleep').cur) : '—'
-  } · 准备度 ${typeof pick('readiness').cur === 'number' ? Math.round(pick('readiness').cur) : '—'} · ${
-    p.label.short
-  }`;
+  // 主题只留报告名 + 署名，区间和分数在正文里
+  const subject = `${isMonth ? 'Monthly' : 'Weekly'} Health Report · Jarvis (Oura Clone)`;
 
-  const header = `<tr><td style="padding:0 0 16px 0;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
-      <td style="font-size:21px;font-weight:700;color:${INK};line-height:27px;letter-spacing:-0.3px;">${title}
-        <div style="font-size:12px;font-weight:400;color:${MUTED};line-height:18px;padding-top:5px;">${p.label.title} · ${p.label.sub}</div>
-      </td>
-      <td align="right" valign="bottom" style="font-size:11px;color:#a1a8b3;line-height:16px;">Oura Ring</td>
-    </tr></table>
-  </td></tr>`;
+  // 信件体：intro 按周期换，日期行左边是本期区间
+  const intro = isMonth
+    ? 'I have processed and compiled your physiological data captured over the past month by Oura for this health briefing.'
+    : 'I have processed and compiled your physiological data captured over the past week by Oura for this health briefing.';
+
+  const header = `${letterHead(intro)}${metaRow(`${mdy(p.period.start)} – ${mdy(p.period.end)}`)}`;
 
   const body = [
     header,
@@ -149,6 +148,7 @@ export function renderPeriodEmail(p) {
       `${sectionTitle(isMonth ? '下个月建议' : '下周建议')}${bulletList(p.advice)}`,
       '16px 16px 8px 16px'
     ),
+    signoffRow(),
     `<tr><td align="center" style="padding:6px 0 0 0;font-size:11px;color:#a1a8b3;line-height:18px;">
       数据来源 Oura Cloud API v2 · 由 Cloudflare Worker 自动生成<br>
       统计区间 ${p.period.start} – ${p.period.end} · 令牌直连，不经第三方
@@ -167,7 +167,7 @@ export function renderPeriodEmail(p) {
 export function renderPeriodEmpty(p) {
   const isMonth = p.kind === 'monthly';
   const title = isMonth ? 'Oura 月报' : 'Oura 周报';
-  const subject = `${isMonth ? '月报' : '周报'} · ${p.label.short} 无数据`;
+  const subject = `${isMonth ? 'Monthly' : 'Weekly'} Health Report · ${p.label.short} 无数据`;
 
   const inner = `${sectionTitle('本期没有 Oura 记录')}
     <div style="font-size:13px;line-height:22px;color:#374151;">
@@ -179,21 +179,37 @@ export function renderPeriodEmpty(p) {
       打开 Oura App 让它同步一次，下个周期的${isMonth ? '月报' : '周报'}就会恢复正常。数据补齐后，这一期也会重新统计。
     </div>`;
 
+  // 整期无数据也走信件体，但 intro 要如实说「没有东西可编译」，不能照抄日报那句
+  const intro = isMonth
+    ? 'I have checked the physiological data Oura captured over the past month, but there is nothing to compile for this period.'
+    : 'I have checked the physiological data Oura captured over the past week, but there is nothing to compile for this period.';
+
   const body = [
-    `<tr><td style="padding:0 0 16px 0;font-size:21px;font-weight:700;color:${INK};line-height:27px;">${title}
-      <div style="font-size:12px;font-weight:400;color:${MUTED};line-height:18px;padding-top:5px;">${p.label.title} · ${p.label.sub}</div>
-    </td></tr>`,
+    letterHead(intro),
+    metaRow(`${mdy(p.period.start)} – ${mdy(p.period.end)}`),
     card(inner),
+    signoffRow(),
     `<tr><td align="center" style="padding:6px 0 0 0;font-size:11px;color:#a1a8b3;line-height:18px;">Cloudflare Worker 自动通知</td></tr>`,
   ].join('');
 
   const text = [
-    `${title}｜${p.label.title}`,
+    'Dear Max',
+    '',
+    'Good day.',
+    '',
+    isMonth
+      ? 'I have checked the physiological data Oura captured over the past month, but there is nothing to compile for this period.'
+      : 'I have checked the physiological data Oura captured over the past week, but there is nothing to compile for this period.',
+    '',
+    `${mdy(p.period.start)} – ${mdy(p.period.end)}`,
     '',
     `统计区间 ${p.period.start} 至 ${p.period.end}（${p.cur.day_count} 天）在 Oura 云上没有任何睡眠记录。`,
     '常见原因：这段时间没戴戒指、戒指没电，或手机上的 Oura App 一直没有同步。',
     '',
     '打开 Oura App 让它同步一次，下个周期就会恢复正常。',
+    '',
+    'Wishing you a steady day.',
+    '— Jarvis (Oura Clone)',
   ].join('\n');
 
   return { subject, html: shell(`${p.label.title} 没有 Oura 数据`, body, title), text };
@@ -211,8 +227,15 @@ export function renderPeriodText(p) {
   };
 
   const lines = [
-    `📊 ${isMonth ? 'Oura 月报' : 'Oura 周报'}`,
-    `${p.label.title} · ${p.label.sub}`,
+    'Dear Max',
+    '',
+    'Good day.',
+    '',
+    isMonth
+      ? 'I have processed and compiled your physiological data captured over the past month by Oura for this health briefing.'
+      : 'I have processed and compiled your physiological data captured over the past week by Oura for this health briefing.',
+    '',
+    `${mdy(p.period.start)} – ${mdy(p.period.end)}`,
     '',
     `睡眠 ${fmtVal('score', pick('sleep').cur)} 分（${grade(pick('sleep').cur).label}）${
       p.has_prev ? fmtDelta('score', pick('sleep').delta) : ''
@@ -232,6 +255,7 @@ export function renderPeriodText(p) {
   for (const t of p.highlights) lines.push(`· ${t.replace(/<\/?b>/g, '')}`);
   lines.push('', isMonth ? '下个月建议' : '下周建议');
   for (const t of p.advice) lines.push(`· ${t.replace(/<\/?b>/g, '')}`);
+  lines.push('', 'Wishing you a steady day.', '— Jarvis (Oura Clone)');
 
   return lines.join('\n');
 }

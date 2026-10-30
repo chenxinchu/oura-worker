@@ -24,7 +24,7 @@ TO_EMAIL = "you@example.com"
 #   1. 显示名是中文时**必须用引号包起来**，否则 Resend 解析 from 头失败，
 #      会退回测试模式报「只能发给注册邮箱」，看起来像域名没验证好
 #   2. 发件域必须已在 Resend 完成 SPF/DKIM 验证
-FROM_EMAIL = "\"Oura 日报\" <daily@your-domain.com>"
+FROM_EMAIL = "\"Jarvis (Oura Clone)\" <daily@your-domain.com>"
 
 # 报告按哪个时区算「今天」
 REPORT_TZ = "Asia/Shanghai"

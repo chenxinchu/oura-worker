@@ -28,7 +28,11 @@ const CORE = ['daily_sleep', 'daily_readiness', 'daily_activity', 'sleep'];
 
 async function getOne(token, endpoint, start, end, alias) {
   const key = alias || endpoint;
-  const url = `${BASE}/${endpoint}?start_date=${start}&end_date=${end}`;
+  // ⚠️ Oura 的 start_date 是「不含当天」的：传 10-27 只会返回 10-28 起的数据，
+  // 区间第一天的记录永远拿不到。所以统一往前挪一天。
+  // （sleep 端点更严重：day=D 的整夜睡眠是 D-1 晚上开始的，不挪就只剩当天的小睡。）
+  const qStart = addDays(start, -1);
+  const url = `${BASE}/${endpoint}?start_date=${qStart}&end_date=${end}`;
   try {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },

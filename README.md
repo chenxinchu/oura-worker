@@ -13,6 +13,33 @@
 周一收到日报 + 周报两封；1 号收到日报 + 月报两封；**1 号恰好是周一时三封都发**（日报 + 周报 + 月报）。  
 调度只用了一个 cron，发哪几封由代码在运行时判断，不需要改配置。
 
+## 日报里的变化标记
+
+每项指标的数值后面跟着一段小字，比如 `↑5.7%`、`↓31m`，表示**较前一日**的变化：
+
+| 写法 | 适用 | 例 |
+|---|---|---|
+| 分数差 | 顶部三大评分（睡眠/准备度/活动） | `↓13` |
+| 百分比 | 其余得分类（效率、静息心率得分、HRV 平衡等） | `↑5.7%` |
+| 绝对差 | 时长类 | `↓31m` |
+| 绝对差 | 步数、心率、消耗这类计数 | `↑2,745` |
+
+颜色：绿 = 变好，红 = 变差，灰 = 持平或方向不分好坏（体温偏差）。  
+方向按指标本身定 —— 入睡耗时、最低心率、久坐、呼吸紊乱是**降了才好**。
+
+覆盖 27 项，三个卡片全部都有：
+
+| 卡片 | 指标 |
+|---|---|
+| 顶部三大数字 | 睡眠评分、准备度、活动评分 |
+| 昨夜睡眠 | 总睡眠、在床时间、深睡、REM、睡眠效率、入睡耗时、平均心率、平均 HRV、最低心率、呼吸频率 |
+| 身体状态 | 静息心率得分、HRV 平衡、体温偏差、恢复指数、血氧、呼吸紊乱、心血管年龄、VO₂ Max |
+| 活动与压力 | 步数、活动消耗、总消耗、久坐、高压力时长、恢复时长 |
+
+前一日没数据就**什么都不显示**（留空），绝不按 0 算——否则「没戴戒指」会画成暴跌。
+
+> 睡眠和活动的基准日不是同一天：睡眠比「前一夜」，活动（含压力、抗压）比「前一日」。因为活动数据整体滞后一天，这是口径正确的做法，不是 bug。
+
 ---
 
 ## ⚠️ 关于认证方式（重要）
@@ -44,9 +71,10 @@ oura-worker/
 │   ├── auth.js          OAuth2 授权、令牌刷新、KV 存取
 │   ├── store.js         D1 历史缓存：按区间读取、缺口检测、写回
 │   ├── oura.js          Oura API v2 取数（超过 30 天自动切片）
-│   ├── report.js        日报：数据整理 + 规则化建议
+│   ├── report.js        日报：数据整理、较前一日对比 + 规则化建议
 │   ├── period.js        周报/月报：区间计算、聚合、环比、亮点、建议
 │   ├── ui.js            邮件 UI 基础件（日报与周月报共用）
+│   ├── delta.js         日报的变化标记（较前一日 + 较 7 日均值）
 │   ├── email.js         日报 HTML 渲染（table 布局、全内联、无 SVG）
 │   ├── email-period.js  周报/月报 HTML 渲染
 │   └── demo.js          演示数据
@@ -182,7 +210,7 @@ npx wrangler secret put DEBUG_KEY
 
 ```toml
 TO_EMAIL = "你的邮箱@example.com"
-FROM_EMAIL = "Oura 日报 <onboarding@resend.dev>"
+FROM_EMAIL = "Jarvis (Oura Clone) <onboarding@resend.dev>"
 ```
 
 > 第一版用 Resend 测试发件域，**不用配 DNS**，但只能发到你自己注册 Resend 的那个邮箱。
@@ -352,10 +380,10 @@ npx wrangler tail
 5. 改 `wrangler.toml`：
 
 ```toml
-FROM_EMAIL = "\"Oura 日报\" <daily@mail.你的域名.com>"
+FROM_EMAIL = "\"Jarvis (Oura Clone)\" <daily@mail.你的域名.com>"
 ```
 
-⚠️ **显示名是中文时必须用引号包起来**。写 `Oura 日报 <daily@...>`（不加引号）会让 Resend 解析 `from` 头失败，直接退回测试模式，报
+⚠️ **显示名含空格或中文时必须用引号包起来**。写 `Jarvis (Oura Clone) <daily@...>`（不加引号）会让 Resend 解析 `from` 头失败，直接退回测试模式，报
 `You can only send testing emails to your own email address`——看起来像是域名没验证好，其实是显示名的锅。纯英文显示名不加引号没问题。
 
 6. `npx wrangler deploy`
@@ -413,8 +441,8 @@ FROM_EMAIL = "\"Oura 日报\" <daily@mail.你的域名.com>"
 | `/fields?ep=`     | 某端点的字段类型结构（不含数值），判断字段缺失原因 | 是      |
 | `/resend/domains` | 查 Resend 域名状态（sending-only key 会 401，正常） | 是      |
 | `/db`             | D1 缓存状态：行数、数据日期范围、已同步天数、各端点条数 | 是      |
-| `/verify`         | 走和定时任务相同的取数路径，渲染三种报告并只回摘要，**不发信** | 是      |
-| `/backfill`       | 回补历史到 D1：`?days=30` 或 `?from=&to=`，一次最多 92 天，**不发信** | 是      |
+| `/verify`         | 走和定时任务相同的取数路径，渲染三种报告并只回摘要，**不发信**；`kinds=daily` 时附带 `cmp`（每项 cur/prev）和 `sleep_records`/`act_days`（raw 里各天的记录），用来排查对比数据 | 是      |
+| `/backfill`       | 回补历史到 D1：`?days=30` 或 `?from=&to=`，加 `&force=1` 无视已同步标记重拉（修脏数据用），一次最多 92 天，**不发信** | 是      |
 
 **排查顺序**：`/health`（配置齐不齐）→ `/envcheck`（密钥干净不干净）→ `/probe`（哪个端点通）→ `/tokeninfo`（令牌什么状态）→ `/refresh`（能不能换新的）。全部 401 且 `/refresh` 报 `invalid_request`，说明 refresh_token 在 Oura 侧已作废，直接访问 `/oauth/start` 重新授权。
 

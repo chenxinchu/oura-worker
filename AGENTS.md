@@ -91,6 +91,12 @@ npx wrangler d1 migrations apply oura-db --remote
 
 新增端点默认标 `false`（可选），失败只记 warning 并跳过该指标。**不要把可选端点加进 `CORE`**——一个指标缺权限不该毁掉整份日报。
 
+### 7. 取数窗口必须往前多要一天
+
+`src/oura.js` 的 `getOne()` 里统一 `start_date = start - 1 天`。Oura 的 `start_date` **不含当天**，不挪的话区间第一天的记录永远拿不到；`sleep` 端点更严重，会只剩当天的小睡（表现为「总睡眠 ↑6h48m」这种荒谬对比）。
+
+改动取数逻辑后，已入库的脏数据不会自愈，要用 `/backfill?from=&to=&force=1` 重拉。
+
 ---
 
 ## 常用命令
@@ -146,11 +152,12 @@ curl -s "$BASE/log?key=$KEY"
 | `src/store.js` | D1 读写：`readRange` / `missingDays` / `toRanges` / `saveRange` / `dbStatus` | 中 |
 | `src/auth.js` | OAuth2 授权码流程、令牌刷新与轮换（存 KV） | 低 |
 | `src/oura.js` | 10 个端点并发取数、超 30 天切片、核心/可选判定 | 中 |
-| `src/report.js` | 日报：数据整理、7 日趋势、规则化建议 | 中 |
+| `src/report.js` | 日报：数据整理、7 日趋势、较前一日对比（`cmp`）、规则化建议 | 中 |
 | `src/period.js` | 周报/月报：区间计算、聚合、环比、亮点、建议 | 中 |
+| `src/delta.js` | 日报变化标记：`change` / `deltaTag` / `deltaText`，格式化规则与配色都在这 | 中 |
 | `src/email.js` | 日报 HTML 渲染 | 高 |
 | `src/email-period.js` | 周报/月报 HTML 渲染 + 无数据短说明 | 高 |
-| `src/ui.js` | 邮件 UI 基础件：`card` / `sectionTitle` / `metricGrid` / `metricCell` / `bulletList` / `noticeBar` / `shell` / `dur0` | 高 |
+| `src/ui.js` | 邮件 UI 基础件：`card` / `sectionTitle` / `metricGrid` / `metricCell` / `bulletList` / `noticeBar` / `shell` / `dur0` / 信件体骨架 `letterHead` / `metaRow` / `signoffRow`（三份报告共用） | 高 |
 | `src/demo.js` | 演示数据，本地预览用 | 低 |
 | `migrations/*.sql` | D1 建表与变更 | 低 |
 | `test/preview.mjs` | 本地渲染脚本 | 低 |
@@ -181,6 +188,12 @@ cron(UTC 01:00)
 | 活动评分、步数、消耗、久坐、压力 | 报告日**前一天** | 早上 9 点今天才刚开始，取今天只有几十步 |
 
 **配额**：免费版单次 invocation 只有 50 个，**D1 查询和 `fetch` 共用这个池子**。`db.batch()` 无论多少语句只算 1 个，这是选 D1 不选 KV 的原因。加功能时留意别把配额吃满。
+
+**变化标记**（`delta.js`）：时间类写绝对差（`+29m`），三大评分写分数差（`+13`，`fmt: 'points'`），其余得分类写百分比（`+5.7%`），计数类写绝对差（`+2,745`）。前一日缺数据时什么都不显示，**不许按 0 算** —— 那会把「没戴戒指」画成暴跌。
+
+算对比要用 `sleepOn()`（严格按 `day` 匹配），不能用 `mainSleep()` —— 后者有「退到最近一条」的兜底，用它算前一日会拿到更早的数据，生成假变化。
+
+压力与抗压水平取 `actDay`（完整日），不取报告日。早上 9 点取今天只有几个小时，跟「昨日」卡片标题也对不上。
 
 **存储分工**：KV 只存令牌（`oauth`）、发送日志（`log:*`）、防抖（`last_send`）；历史健康数据全在 D1。不要把健康数据写 KV。
 

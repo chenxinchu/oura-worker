@@ -29,13 +29,16 @@ export function sectionTitle(text) {
   </tr></table>`;
 }
 
+// item = [label, value, unit?, deltaHtml?]
+// deltaHtml 是「较前一日 / 较 7 日均」的小字，紧跟在数值后面，没有就不占位
 export function metricCell(item) {
   if (!item) return '<td width="50%"></td>';
-  const [label, value, unit] = item;
+  const [label, value, unit, extra] = item;
   const u = unit ? `<span style="font-size:11px;font-weight:400;color:#9ca3af;"> ${unit}</span>` : '';
-  return `<td width="50%" style="padding:6px 8px 6px 0;vertical-align:top;">
+  const tail = extra ? `<span style="margin-left:7px;">${extra}</span>` : '';
+  return `<td width="50%" style="padding:6px 12px 6px 0;vertical-align:top;">
     <div style="font-size:11px;color:${MUTED};line-height:16px;">${label}</div>
-    <div style="font-size:16px;font-weight:700;color:${INK};line-height:22px;">${value}${u}</div>
+    <div style="font-size:16px;font-weight:700;color:${INK};line-height:22px;">${value}${u}${tail}</div>
   </td>`;
 }
 
@@ -73,6 +76,33 @@ export function noticeBar(text, tone = 'warn') {
       style="background:${c.bg};border:1px solid ${c.bd};border-radius:10px;table-layout:fixed;">
       <tr><td style="padding:10px 12px;font-size:12px;line-height:19px;color:${c.fg};">${text}</td></tr>
     </table>
+  </td></tr>`;
+}
+
+// 信件体骨架：日报 / 周报 / 月报共用，只有 intro 那句话按周期换
+export function letterHead(intro) {
+  return `<tr><td style="padding:0 0 16px 0;">
+    <div style="font-size:15px;font-weight:700;color:${INK};line-height:22px;">Dear Max</div>
+    <div style="font-size:13px;color:#374151;line-height:22px;padding-top:12px;">Good day.</div>
+    <div style="font-size:13px;color:#374151;line-height:22px;padding-top:8px;">${intro}</div>
+  </td></tr>`;
+}
+
+// 一行元信息：左边日期，右边品牌
+export function metaRow(text) {
+  return `<tr><td style="padding:0 0 12px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
+      <td valign="middle" style="font-size:12px;color:${MUTED};line-height:18px;">${text}</td>
+      <td align="right" valign="middle" style="font-size:11px;color:#a1a8b3;line-height:18px;">Oura Ring</td>
+    </tr></table>
+  </td></tr>`;
+}
+
+// 落款：祝福语居左，签名单独居右
+export function signoffRow() {
+  return `<tr><td style="padding:2px 0 14px 0;">
+    <div style="font-size:13px;color:#374151;line-height:22px;">Wishing you a steady day.</div>
+    <div align="right" style="font-size:13px;color:#6b7280;line-height:22px;padding-top:6px;">— Jarvis (Oura Clone)</div>
   </td></tr>`;
 }
 

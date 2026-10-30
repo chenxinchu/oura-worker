@@ -24,6 +24,8 @@ export function demoRaw(days = 7, reportDay) {
   const daily_stress = [];
   const daily_resilience = [];
   const daily_spo2 = [];
+  const daily_cardiovascular_age = [];
+  const vo2_max = [];
 
   for (let i = days - 1; i >= 0; i--) {
     const day = addDays(reportDay, -i);
@@ -41,8 +43,9 @@ export function demoRaw(days = 7, reportDay) {
       temperature_deviation: Number((rnd() * 0.5 - 0.15).toFixed(1)),
       temperature_trend_deviation: 0.1,
       contributors: {
-        activity_balance: 74, body_temperature: 88, hrv_balance: 79, previous_day_activity: 71,
-        previous_night: 83, recovery_index: 76, resting_heart_rate: 85, sleep_balance: 80,
+        activity_balance: ri(60, 92), body_temperature: ri(70, 95), hrv_balance: ri(58, 90),
+        previous_day_activity: ri(62, 94), previous_night: ri(65, 92), recovery_index: ri(60, 93),
+        resting_heart_rate: ri(64, 96), sleep_balance: ri(66, 92),
       },
     });
 
@@ -71,6 +74,9 @@ export function demoRaw(days = 7, reportDay) {
       spo2_percentage: { average: Number((95.4 + rnd() * 2.8).toFixed(1)) },
       breathing_disturbance_index: ri(1, 6),
     });
+
+    daily_cardiovascular_age.push({ day, vascular_age: isLast ? 31 : ri(29, 34) });
+    vo2_max.push({ day, vo2_max: Number((42 + rnd() * 4).toFixed(1)) });
 
     sleep.push({
       day,
@@ -102,7 +108,7 @@ export function demoRaw(days = 7, reportDay) {
     daily_stress,
     daily_resilience,
     daily_spo2,
-    daily_cardiovascular_age: [{ day: reportDay, vascular_age: 31 }],
-    vo2_max: [{ day: reportDay, vo2_max: 44.6 }],
+    daily_cardiovascular_age,
+    vo2_max,
   };
 }
