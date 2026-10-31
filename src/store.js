@@ -166,6 +166,53 @@ export async function saveRange(env, raw, start, end) {
   return { written, days: Object.keys(perDay).length, batches };
 }
 
+// LLM 洞察单独缓存，避免将解释性内容混入 Oura 原始数据表。
+// 当前调用方尚未启用模型；这些接口为后续模型接入提供幂等缓存边界。
+export async function readInsight(env, reportType, reportKey, inputHash, promptVersion) {
+  if (!dbReady(env)) return null;
+  try {
+    const row = await env.DB.prepare(
+      `SELECT content_json, source, model, created_at
+       FROM ai_insight
+       WHERE report_type = ?1 AND report_key = ?2 AND input_hash = ?3 AND prompt_version = ?4`
+    )
+      .bind(reportType, reportKey, inputHash, promptVersion)
+      .first();
+    if (!row) return null;
+    return { ...row, content: JSON.parse(row.content_json) };
+  } catch (e) {
+    console.log('[insight-read-failed]', String((e && e.message) || e));
+    return null;
+  }
+}
+
+export async function saveInsight(env, rec) {
+  if (!dbReady(env)) return false;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO ai_insight (report_type, report_key, input_hash, prompt_version, source, model, content_json, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+       ON CONFLICT(report_type, report_key, input_hash, prompt_version) DO UPDATE SET
+         source = excluded.source, model = excluded.model, content_json = excluded.content_json, created_at = excluded.created_at`
+    )
+      .bind(
+        rec.report_type,
+        rec.report_key,
+        rec.input_hash,
+        rec.prompt_version,
+        rec.source,
+        rec.model || null,
+        JSON.stringify(rec.content),
+        rec.created_at || Date.now()
+      )
+      .run();
+    return true;
+  } catch (e) {
+    console.log('[insight-write-failed]', String((e && e.message) || e));
+    return false;
+  }
+}
+
 // 诊断用：库里有什么、覆盖到哪天
 export async function dbStatus(env) {
   if (!dbReady(env)) return { bound: false, hint: 'wrangler.toml 里没有 [[d1_databases]]' };

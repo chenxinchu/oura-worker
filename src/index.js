@@ -7,6 +7,14 @@ import { buildPayload, todayInTZ, addDays } from './report.js';
 import { buildPeriodPayload, weekRange, monthRange, daysBetween } from './period.js';
 import { renderEmail, renderAlert, renderText } from './email.js';
 import { renderPeriodEmail, renderPeriodEmpty, renderPeriodText } from './email-period.js';
+import {
+  buildDailyRuleInsight,
+  buildPeriodRuleInsight,
+  resolveDailyInsight,
+  resolvePeriodInsight,
+} from './insights.js';
+import { dailyProbeContext, generateLlmInsight, probeLlm } from './llm.js';
+import { validateDailyInsight } from './insight-schema.js';
 import { demoRaw } from './demo.js';
 import {
   authorizeUrl,
@@ -188,6 +196,7 @@ async function sendDaily(env, raw, today, warnings) {
     const r = await sendMail(env, a.subject, a.html, a.text);
     return { type: 'daily', step: 'no-data', reportDay: p.report_day, ...r };
   }
+  p.insight = await resolveDailyInsight(env, p);
   const out = renderEmail(p);
   const r = await sendMail(env, out.subject, out.html, out.text);
   return { type: 'daily', step: 'sent', reportDay: p.report_day, subject: out.subject, warnings, ...r };
@@ -209,6 +218,7 @@ async function sendPeriod(env, raw, kind, today) {
     };
   }
 
+  p.insight = await resolvePeriodInsight(env, p);
   const out = renderPeriodEmail(p);
   const r = await sendMail(env, out.subject, out.html, out.text);
   return {
@@ -815,12 +825,27 @@ export default {
       });
     }
 
+    // 模型连通性检查：只发固定文本，便于排查 Key / 模型 / 兼容端点。
+    if (path === '/llm/probe') {
+      const result = await probeLlm(env);
+      return json(result, result.ok ? 200 : 502);
+    }
+
+    if (path === '/llm/daily-probe') {
+      const result = await generateLlmInsight(env, dailyProbeContext(), true);
+      const output = result?.output;
+      const valid = validateDailyInsight(output && { ...output, source: 'llm' });
+      return json({ ok: Boolean(valid), error: result?.error || null, keys: output && typeof output === 'object' ? Object.keys(output) : [], output: valid ? null : output }, valid ? 200 : 502);
+    }
+
     // 预览邮件 HTML（不发送）
     if (path === '/preview') {
       const tz = env.REPORT_TZ || 'Asia/Shanghai';
       const today = url.searchParams.get('day') || todayInTZ(tz);
       const type = url.searchParams.get('type') || 'daily';
       const kind = type === 'weekly' || type === 'monthly' ? type : 'daily';
+      // 默认预览只渲染规则版；明确 ai=1 才会调用模型，且全程不发邮件。
+      const useAi = url.searchParams.get('ai') === '1';
 
       // 周报要跨两周、月报要跨两个月，取数窗口按实际对比区间算
       const from =
@@ -865,10 +890,13 @@ export default {
 
       let out;
       if (kind === 'daily') {
-        out = renderEmail(buildPayload(raw, DAYS, today));
+        const p = buildPayload(raw, DAYS, today);
+        p.insight = useAi ? await resolveDailyInsight(env, p) : buildDailyRuleInsight(p);
+        out = renderEmail(p);
       } else {
         // 预览要和实际发送一致：整期无数据时展示的就是那条短说明
         const pp = buildPeriodPayload(raw, kind, today);
+        if (pp.cur.n.sleep) pp.insight = useAi ? await resolvePeriodInsight(env, pp) : buildPeriodRuleInsight(pp);
         out = pp.cur.n.sleep ? renderPeriodEmail(pp) : renderPeriodEmpty(pp);
       }
 
@@ -877,6 +905,7 @@ export default {
           'Content-Type': 'text/html; charset=utf-8',
           'X-Report-Kind': kind,
           'X-Report-Subject': encodeURIComponent(out.subject),
+          'X-Insight-Mode': useAi ? 'ai' : 'rules',
           // 有降级时把原因透出来，方便在浏览器开发者工具里看到
           'X-Report-Warnings': warnings.length ? encodeURIComponent(warnings.join(' | ')) : '',
         },
@@ -964,15 +993,23 @@ export default {
       const raw = demoRaw(span, today);
       const body =
         type === 'weekly' || type === 'monthly'
-          ? renderPeriodText(buildPeriodPayload(raw, type, today))
-          : renderText(buildPayload(raw, DAYS, today));
+          ? (() => {
+              const p = buildPeriodPayload(raw, type, today);
+              p.insight = buildPeriodRuleInsight(p);
+              return renderPeriodText(p);
+            })()
+          : (() => {
+              const p = buildPayload(raw, DAYS, today);
+              p.insight = buildDailyRuleInsight(p);
+              return renderText(p);
+            })();
       return new Response(body, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     }
 
     return json(
       {
         ok: false,
-        error: '可用路径：/health、/oauth/start?key=、/oauth/callback、/probe?key=、/resend/domains?key=、/fields?key=&ep=、/envcheck?key=、/tokeninfo?key=、/refresh?key=、/revoke?key=、/preview?key=&type=daily|weekly|monthly&demo=1、/send?key=&type=auto|daily|weekly|monthly|all、/log?key=、/text?key=',
+        error: '可用路径：/health、/oauth/start?key=、/oauth/callback、/probe?key=、/llm/probe?key=、/llm/daily-probe?key=、/resend/domains?key=、/fields?key=&ep=、/envcheck?key=、/tokeninfo?key=、/refresh?key=、/revoke?key=、/preview?key=&type=daily|weekly|monthly&demo=1&ai=1、/send?key=&type=auto|daily|weekly|monthly|all、/log?key=、/text?key=',
       },
       404
     );

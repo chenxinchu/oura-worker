@@ -65,7 +65,8 @@ oura-worker/
 ├── wrangler.toml          本地副本（含真实邮箱与 id），已被 .gitignore 排除
 ├── package.json
 ├── migrations/
-│   └── 0001_init.sql    D1 建表：原始记录缓存
+│   ├── 0001_init.sql    D1 建表：原始记录缓存
+│   └── 0002_ai_insight.sql  AI 洞察缓存
 ├── src/
 │   ├── index.js         Worker 入口：scheduled + fetch（含 OAuth 路由、调度决策、取数编排）
 │   ├── auth.js          OAuth2 授权、令牌刷新、KV 存取
@@ -73,6 +74,9 @@ oura-worker/
 │   ├── oura.js          Oura API v2 取数（超过 30 天自动切片）
 │   ├── report.js        日报：数据整理、较前一日对比 + 规则化建议
 │   ├── period.js        周报/月报：区间计算、聚合、环比、亮点、建议
+│   ├── insights.js      洞察上下文、规则降级、模型缓存编排
+│   ├── llm.js           OpenAI-compatible Chat Completions 调用与超时保护
+│   ├── insight-schema.js 洞察 JSON 结构校验
 │   ├── ui.js            邮件 UI 基础件（日报与周月报共用）
 │   ├── delta.js         日报的变化标记（较前一日 + 较 7 日均值）
 │   ├── email.js         日报 HTML 渲染（table 布局、全内联、无 SVG）
@@ -171,6 +175,40 @@ npx wrangler d1 migrations apply oura-db --remote
 >
 > 建好后不需要手动回补——第一次运行会自动拉最近几天，历史缺口用 `/backfill` 补（见「历史数据缓存」章节）。
 
+### 可选：LLM 洞察
+
+默认报告只使用本地规则建议，不会调用第三方模型。要启用 AI 解读，在本地 `wrangler.toml` 的 `[vars]` 中填写 OpenAI-compatible Chat Completions 端点和模型名。DeepSeek 示例：
+
+```toml
+LLM_BASE_URL = "https://api.deepseek.com"
+LLM_MODEL = "deepseek-flash"
+```
+
+再写入密钥：
+
+```bash
+npx wrangler secret put LLM_API_KEY
+```
+
+每份报告最多调用一次；同一份聚合指标和 prompt 版本会命中 D1 缓存。仅会发送报告的聚合评分、变化和趋势，不发送 Oura 原始 JSON、邮箱、OAuth 令牌或设备标识。模型超时、限流或返回不合格内容时，自动使用本地规则建议，报告和发信不会被中断。
+
+AI 输出仅供健康趋势参考，不构成医疗建议。
+
+配置后可用 `GET /preview?type=daily&ai=1&key=...` 无发信地检查模型版邮件；不带 `ai=1` 的预览始终只使用本地规则建议。
+
+模型连通性可用 `GET /llm/probe?key=...` 排查；该接口只发送固定文本，不发送健康数据，也不会发邮件。
+`GET /llm/daily-probe?key=...` 会用合成指标验证日报 JSON 合同，同样不发送健康数据或邮件。
+
+日报会以近 7 天个人有效样本作为主基线；样本不足时会明确降级参考较昨日变化。可选的 Oura `tag` 端点会读取当日标签，用于经期、宝宝夜醒、休息不跑步等规则。该端点无权限时只跳过标签，不影响报告。
+
+固定画像默认适配夜间照料幼儿、周二/四/六跑步。需要覆盖默认值时，可写入私密配置：
+
+```bash
+npx wrangler secret put USER_PROFILE_JSON
+```
+
+示例值：`{"night_childcare":true,"run_days":[2,4,6]}`。单日 Oura 标签优先于固定画像。
+
 ---
 
 ## 第 2 步：登录 Cloudflare
@@ -242,7 +280,7 @@ npx wrangler deploy
 | ---------------- | -------------------------------------------------------------- |
 | Application name | `Oura Daily Mail`（随意）                                          |
 | Redirect URI     | `https://oura-daily.<你的子域>.workers.dev/oauth/callback`         |
-| Scopes           | `daily`、`personal`、`heartrate`、`spo2`、`heart_health`、`workout` |
+| Scopes           | `daily`、`personal`、`heartrate`、`spo2`、`heart_health`、`workout`、`tag` |
 
 > **Redirect URI 必须一字不差**，包括协议、路径，末尾不能多斜杠。  
 > 填错会在回调时报 `redirect_uri` 不匹配。

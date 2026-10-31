@@ -23,6 +23,22 @@ import { fmtVal, fmtDelta } from './period.js';
 const md = (day) => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
 const mdy = (day) => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}/${day.slice(0, 4)}`;
 
+function adviceBlock(p) {
+  if (!p.insight) return bulletList(p.advice);
+  const esc = (text) =>
+    String(text || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  const items = p.insight.priorities.map(
+    (item) => `<b>${esc(item.title)}</b>：${esc(item.reason)}<br>${esc(item.action)}`
+  );
+  return `<div style="font-size:13px;line-height:21px;color:#374151;padding:0 0 10px 0;">${esc(p.insight.summary)}</div>${bulletList(
+    items
+  )}<div style="font-size:11px;line-height:18px;color:#8b93a1;padding:2px 0 0 0;">${esc(p.insight.caution)}</div>`;
+}
+
 // 环比箭头：跌了用红、涨了用绿；对「入睡耗时」「久坐」这类指标，
 // 方向好坏由 r.good 决定，不是单纯看涨跌
 function deltaChip(r, p) {
@@ -145,7 +161,7 @@ export function renderPeriodEmail(p) {
     card(`${sectionTitle(`${p.prev_title.replace('较', '')}对比`)}${compareTable(p)}`),
     card(`${sectionTitle(isMonth ? '本月亮点与异常' : '本周亮点与异常')}${bulletList(p.highlights)}`),
     card(
-      `${sectionTitle(isMonth ? '下个月建议' : '下周建议')}${bulletList(p.advice)}`,
+      `${sectionTitle(p.insight ? (isMonth ? '本月解读与下月建议' : '本周解读与下周建议') : isMonth ? '下个月建议' : '下周建议')}${adviceBlock(p)}`,
       '16px 16px 8px 16px'
     ),
     signoffRow(),
@@ -253,8 +269,14 @@ export function renderPeriodText(p) {
     '亮点与异常',
   ];
   for (const t of p.highlights) lines.push(`· ${t.replace(/<\/?b>/g, '')}`);
-  lines.push('', isMonth ? '下个月建议' : '下周建议');
-  for (const t of p.advice) lines.push(`· ${t.replace(/<\/?b>/g, '')}`);
+  lines.push('', p.insight ? (isMonth ? '本月解读与下月建议' : '本周解读与下周建议') : isMonth ? '下个月建议' : '下周建议');
+  if (p.insight) {
+    lines.push(p.insight.summary);
+    for (const item of p.insight.priorities) lines.push(`· ${item.title}：${item.action}`);
+    lines.push(p.insight.caution);
+  } else {
+    for (const t of p.advice) lines.push(`· ${t.replace(/<\/?b>/g, '')}`);
+  }
   lines.push('', 'Wishing you a steady day.', '— Jarvis (Oura Clone)');
 
   return lines.join('\n');

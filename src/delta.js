@@ -1,4 +1,4 @@
-// 日报的「较前一日」标记
+// 日报的变化标记：调用方可选择前一日或个人基线作为参照。
 // 只负责把两个数字变成一段小字，不参与取数，也不改版式
 
 import { fmtDelta } from './period.js';
@@ -32,28 +32,28 @@ export function change(t, cur, prev, fmt) {
   return { text: `${sign}${Math.abs(Math.round(d)).toLocaleString('en-US')}`, dir: d > 0 ? 1 : -1 };
 }
 
-// 方向好坏由指标自己决定：入睡耗时、最低心率是降了才好
-function tone(r, pref) {
-  if (!r || r.dir === 0 || pref === 'none') return GRAY;
-  return (pref === 'up' ? r.dir > 0 : r.dir < 0) ? GREEN : RED;
+// 邮件箭头只表达数值方向：上升绿、下降红、持平灰。
+function tone(r) {
+  if (!r || r.dir === 0) return GRAY;
+  return r.dir > 0 ? GREEN : RED;
 }
 
 const arrowOf = (r) => (r.dir > 0 ? '↑' : r.dir < 0 ? '↓' : '');
 
-function piece(r, pref) {
-  const color = tone(r, pref);
+function piece(r) {
+  const color = tone(r);
   const a = arrowOf(r);
   const body = a ? `${a}${r.text.replace(/^[+−]/, '')}` : r.text;
   return `<span style="color:${color};font-weight:700;">${body}</span>`;
 }
 
 // 一段标记，行内片段，由调用方决定紧跟数值还是另起一行
-// 前一日没数据就什么都不显示 —— 空着比挂个「无对比」干净，也不占位
+// 参照值没数据就什么都不显示 —— 空着比挂个「无对比」干净，也不占位
 export function deltaInline(c) {
   if (!c) return '';
   const r = change(c.t, c.cur, c.prev, c.fmt);
   if (!r) return '';
-  return `<span style="font-size:10px;line-height:14px;white-space:nowrap;">${piece(r, c.pref)}</span>`;
+  return `<span style="font-size:10px;line-height:14px;white-space:nowrap;">${piece(r)}</span>`;
 }
 
 // 需要单独占一行时用（图例下方）

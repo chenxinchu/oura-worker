@@ -89,6 +89,28 @@ function sleepOn(sleeps, day) {
   return pool.reduce((a, b) => ((b.total_sleep_duration || 0) > (a.total_sleep_duration || 0) ? b : a), pool[0]);
 }
 
+function avgWithCount(values) {
+  const valid = values.filter((v) => typeof v === 'number' && isFinite(v));
+  return {
+    avg: valid.length ? Math.round((valid.reduce((sum, v) => sum + v, 0) / valid.length) * 10) / 10 : null,
+    n: valid.length,
+  };
+}
+
+// Oura Tag 在不同版本/类型中可能使用 day、start_day 或 start_time；统一映射到报告日。
+function tagsOn(tags, day) {
+  const out = [];
+  for (const tag of tags || []) {
+    if (!tag || typeof tag !== 'object') continue;
+    const start = tag.start_day || tag.day || (tag.start_time || '').slice(0, 10);
+    const end = tag.end_day || (tag.end_time || '').slice(0, 10) || start;
+    if (!start || start > day || (end && end < day)) continue;
+    const label = tag.tag_type_name || tag.tag_type_code || tag.comment || tag.name || tag.id;
+    if (label) out.push(String(label));
+  }
+  return [...new Set(out)];
+}
+
 const STRESS_CN = { restored: '恢复充足', normal: '正常', stressful: '压力偏高', unknown: '—' };
 const RESIL_CN = { limited: '有限', adequate: '尚可', solid: '稳定', strong: '强', exceptional: '极佳' };
 
@@ -170,6 +192,8 @@ export function buildPayload(raw, days, reportDay) {
     // 昨夜睡眠
     total_sleep: { cur: detail.total_sleep_duration, prev: dPrev.total_sleep_duration, t: 'dur', pref: 'up' },
     time_in_bed: { cur: detail.time_in_bed, prev: dPrev.time_in_bed, t: 'dur', pref: 'none' },
+    light: { cur: detail.light_sleep_duration, prev: dPrev.light_sleep_duration, t: 'dur', pref: 'none' },
+    awake: { cur: detail.awake_time, prev: dPrev.awake_time, t: 'dur', pref: 'down' },
     deep: { cur: detail.deep_sleep_duration, prev: dPrev.deep_sleep_duration, t: 'dur', pref: 'up' },
     rem: { cur: detail.rem_sleep_duration, prev: dPrev.rem_sleep_duration, t: 'dur', pref: 'up' },
     efficiency: { cur: detail.efficiency, prev: dPrev.efficiency, t: 'pct', pref: 'up' },
@@ -229,6 +253,69 @@ export function buildPayload(raw, days, reportDay) {
     // 压力概况、抗压水平是等级文字，没有数值差，不做对比
   };
 
+  // 个人基线：各指标只和本人最近 7 天的有效记录比较；n < 7 时渲染层会明确说明样本不足。
+  const baselineDays = Array.from({ length: 7 }, (_, i) => addDays(day, -i));
+  const base = {
+    sleep: [], readiness: [], activity: [], total_sleep: [], time_in_bed: [], efficiency: [], latency: [], deep: [], rem: [], light: [], awake: [],
+    hrv: [], avg_hr: [], min_hr: [], resp: [], resting_hr: [], hrv_balance: [], temp: [], recovery: [], spo2: [], apnea: [], vascular_age: [], vo2max: [],
+    steps: [], active_cal: [], total_cal: [], sedentary: [], stress_high: [], recovery_high: [],
+  };
+  for (const d of baselineDays) {
+    const sd = sleepByDay[d] || {};
+    const rd = readyByDay[d] || {};
+    const dd = sleepOn(raw.sleep, d);
+    const ad = addDays(d, -1);
+    const ac = actByDay[ad] || {};
+    const st = stressByDay[ad] || {};
+    const ox = spo2ByDay[d] || {};
+    const ca = cvByDay[d] || {};
+    const vm = vo2ByDay[d] || {};
+    base.sleep.push(sd.score);
+    base.readiness.push(rd.score);
+    base.activity.push(ac.score);
+    base.total_sleep.push(dd.total_sleep_duration);
+    base.time_in_bed.push(dd.time_in_bed);
+    base.efficiency.push(dd.efficiency);
+    base.latency.push(dd.latency);
+    base.deep.push(dd.deep_sleep_duration);
+    base.rem.push(dd.rem_sleep_duration);
+    base.light.push(dd.light_sleep_duration);
+    base.awake.push(dd.awake_time);
+    base.hrv.push(dd.average_hrv);
+    base.avg_hr.push(dd.average_heart_rate);
+    base.min_hr.push(dd.lowest_heart_rate);
+    base.resp.push(dd.average_breath);
+    base.resting_hr.push((rd.contributors || {}).resting_heart_rate);
+    base.hrv_balance.push((rd.contributors || {}).hrv_balance);
+    base.temp.push(rd.temperature_deviation);
+    base.recovery.push((rd.contributors || {}).recovery_index);
+    base.spo2.push((ox.spo2_percentage || {}).average);
+    base.apnea.push(ox.breathing_disturbance_index);
+    base.vascular_age.push(ca.vascular_age);
+    base.vo2max.push(vm.vo2_max);
+    base.steps.push(ac.steps);
+    base.active_cal.push(ac.active_calories);
+    base.total_cal.push(ac.total_calories);
+    base.sedentary.push(ac.sedentary_time);
+    base.stress_high.push(st.stress_high);
+    base.recovery_high.push(st.recovery_high);
+  }
+  const baseline = Object.fromEntries(Object.entries(base).map(([key, values]) => [key, avgWithCount(values)]));
+  const baseKey = {
+    sleep: 'sleep', readiness: 'readiness', activity: 'activity', total_sleep: 'total_sleep', time_in_bed: 'time_in_bed',
+    light: 'light', awake: 'awake', deep: 'deep', rem: 'rem', efficiency: 'efficiency', latency: 'latency',
+    avg_hr: 'avg_hr', hrv: 'hrv', low_hr: 'min_hr', breath: 'resp', resting_hr: 'resting_hr',
+    hrv_balance: 'hrv_balance', temp_dev: 'temp', recovery_index: 'recovery', spo2: 'spo2', breathing: 'apnea',
+    vascular_age: 'vascular_age', vo2max: 'vo2max', steps: 'steps', active_cal: 'active_cal', total_cal: 'total_cal',
+    sedentary: 'sedentary', stress_high: 'stress_high', recovery_high: 'recovery_high',
+  };
+  const base_cmp = Object.fromEntries(
+    Object.entries(cmp).map(([key, item]) => {
+      const ref = baseline[baseKey[key]];
+      return [key, ref && typeof ref.avg === 'number' ? { ...item, prev: ref.avg } : null];
+    })
+  );
+
   return {
     report_day: day,
     is_today: day === reportDay,
@@ -249,6 +336,7 @@ export function buildPayload(raw, days, reportDay) {
     recovery_high: stress.recovery_high ?? null,
     stress_summary: STRESS_CN[stress.day_summary] || '—',
     resilience: RESIL_CN[resil.level] || '—',
+    user_tags: tagsOn(raw.tag, day),
     spo2: (spo2.spo2_percentage || {}).average ?? null,
     breathing_disturbance: spo2.breathing_disturbance_index ?? null,
     vascular_age: cv.vascular_age ?? null,
@@ -259,6 +347,8 @@ export function buildPayload(raw, days, reportDay) {
     prev_day: prevDay,
     prev_act_day: prevActDay,
     cmp,
+    base_cmp,
+    baseline,
     avg: { sleep: avgOf(trend, 'sleep'), readiness: avgOf(trend, 'readiness'), activity: avgOf(trendAct, 'activity') },
   };
 }

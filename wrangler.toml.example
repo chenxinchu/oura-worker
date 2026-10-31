@@ -33,6 +33,11 @@ REPORT_TZ = "Asia/Shanghai"
 # 部署后会得到一个 https://oura-daily.<你的子域>.workers.dev
 PUBLIC_ORIGIN = "https://oura-daily.your-subdomain.workers.dev"
 
+# 可选：三个 LLM_* 都填写后才会调用模型；不填则只使用本地规则建议。
+# DeepSeek OpenAI-compatible 示例；也可替换为其他兼容 Chat Completions 的供应商。
+LLM_BASE_URL = "https://api.deepseek.com"
+LLM_MODEL = "deepseek-flash"
+
 # OAuth 令牌存在 KV 里：access_token 会过期，靠 refresh_token 自动续期
 # 执行 npx wrangler kv namespace create OURA_KV，把输出的 id 填到这里
 # 注意 binding 必须是 KV（不是 OURA_KV），代码里用的是 env.KV
@@ -57,3 +62,5 @@ enabled = true
 #   OURA_CLIENT_SECRET  Oura 应用的 Client Secret
 #   RESEND_API_KEY      Resend API Key
 #   DEBUG_KEY           调试接口与 OAuth state 的口令
+#   LLM_API_KEY         模型 API Key（可选；只接收已聚合的报告指标）
+#   USER_PROFILE_JSON    可选固定画像，例如 {"night_childcare":true,"run_days":[2,4,6]}

@@ -14,6 +14,7 @@ import { buildPayload, todayInTZ } from '../src/report.js';
 import { buildPeriodPayload, daysBetween, monthRange, weekRange } from '../src/period.js';
 import { renderEmail, renderAlert } from '../src/email.js';
 import { renderPeriodEmail } from '../src/email-period.js';
+import { buildDailyRuleInsight, buildPeriodRuleInsight } from '../src/insights.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const today = process.argv[2] || todayInTZ('Asia/Shanghai');
@@ -31,9 +32,17 @@ const checks = (label, html) => {
 // 演示数据要比趋势窗口多两天：活动整体滞后一天，它的「7 日均值」还要再往前一天
 const rawDaily = demoRaw(9, today);
 const p = buildPayload(rawDaily, 7, today);
+p.insight = buildDailyRuleInsight(p);
 const daily = renderEmail(p);
 out('preview.html', daily.html);
 out('preview.txt', daily.text);
+
+// 动态标签场景：确认「宝宝夜醒频繁」不会被写成自主熬夜或失眠。
+const rawTagged = demoRaw(9, today);
+rawTagged.tag = [{ id: 'demo-tag-child-waking', day: today, tag_type_name: '宝宝夜醒频繁' }];
+const taggedPayload = buildPayload(rawTagged, 7, today);
+taggedPayload.insight = buildDailyRuleInsight(taggedPayload);
+out('daily-tags.html', renderEmail(taggedPayload).html);
 
 // ---- 周报 / 月报：演示数据要覆盖到「上上期」 ----
 const mRange = monthRange(today);
@@ -41,11 +50,15 @@ const wRange = weekRange(today);
 const span = Math.max(daysBetween(mRange.prevStart, today), daysBetween(wRange.prevStart, today));
 const rawPeriod = demoRaw(span, today);
 
-const weekly = renderPeriodEmail(buildPeriodPayload(rawPeriod, 'weekly', today));
+const weeklyPayload = buildPeriodPayload(rawPeriod, 'weekly', today);
+weeklyPayload.insight = buildPeriodRuleInsight(weeklyPayload);
+const weekly = renderPeriodEmail(weeklyPayload);
 out('weekly.html', weekly.html);
 out('weekly.txt', weekly.text);
 
-const monthly = renderPeriodEmail(buildPeriodPayload(rawPeriod, 'monthly', today));
+const monthlyPayload = buildPeriodPayload(rawPeriod, 'monthly', today);
+monthlyPayload.insight = buildPeriodRuleInsight(monthlyPayload);
+const monthly = renderPeriodEmail(monthlyPayload);
 out('monthly.html', monthly.html);
 out('monthly.txt', monthly.text);
 

@@ -13,32 +13,55 @@ export const RED = '#dc2626';
 export const GRAY = '#9ca3af';
 export const ACCENT = '#7c5cff';
 
-export function card(inner, padding = '16px 16px 12px 16px') {
+// 日报视觉规范：浅灰底 + 纯白卡 + 大圆角 + 柔和阴影，颜色只点缀数字与标记
+export const D = {
+  bg: '#F3F4F6',
+  card: '#FFFFFF',
+  ink: '#222226',
+  title: '#44444B',
+  sub: '#888890',
+  hair: '#E4E5EA',
+  sleep: '#A78BFA',
+  ready: '#34D399',
+  active: '#60A5FA',
+  warn: '#FB923C',
+};
+
+// 日报卡片：无边框、20px 圆角、0 8px 24px 阴影；variant 留空时沿用周报/月报的细边框样式
+export function card(inner, padding = '16px 16px 12px 16px', variant = 'plain') {
+  const skin =
+    variant === 'soft'
+      ? `background:${D.card};border-radius:20px;box-shadow:0 8px 24px rgba(0,0,0,0.06);`
+      : 'background:#ffffff;border:1px solid #e9ebef;border-radius:12px;';
   return `<tr><td style="padding:0 0 12px 0;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-      style="background:#ffffff;border:1px solid #e9ebef;border-radius:12px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="${skin}">
       <tr><td style="padding:${padding};">${inner}</td></tr>
     </table>
   </td></tr>`;
 }
 
-export function sectionTitle(text) {
+export function sectionTitle(text, color = '#111827') {
   return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px 0;"><tr>
     <td width="3" style="width:3px;background:${ACCENT};border-radius:2px;font-size:0;line-height:0;">&nbsp;</td>
-    <td style="padding-left:8px;font-size:14px;font-weight:700;color:#111827;line-height:18px;">${text}</td>
+    <td style="padding-left:8px;font-size:14px;font-weight:700;color:${color};line-height:18px;">${text}</td>
   </tr></table>`;
 }
 
-// item = [label, value, unit?, deltaHtml?]
+// 日报标题：去掉竖条，只留字重与字色，靠留白分隔
+export function plainTitle(text, color = D.title, size = 14) {
+  return `<div style="font-size:${size}px;font-weight:700;color:${color};line-height:20px;padding:0 0 12px 0;">${text}</div>`;
+}
+
+// item = [label, value, unit?, deltaHtml?, noteHtml?]
 // deltaHtml 是「较前一日 / 较 7 日均」的小字，紧跟在数值后面，没有就不占位
 export function metricCell(item) {
   if (!item) return '<td width="50%"></td>';
-  const [label, value, unit, extra] = item;
+  const [label, value, unit, extra, note] = item;
   const u = unit ? `<span style="font-size:11px;font-weight:400;color:#9ca3af;"> ${unit}</span>` : '';
   const tail = extra ? `<span style="margin-left:7px;">${extra}</span>` : '';
   return `<td width="50%" style="padding:6px 12px 6px 0;vertical-align:top;">
     <div style="font-size:11px;color:${MUTED};line-height:16px;">${label}</div>
-    <div style="font-size:16px;font-weight:700;color:${INK};line-height:22px;">${value}${u}${tail}</div>
+    <div style="font-size:16px;font-weight:700;color:${INK};line-height:22px;">${value}${u}${tail}</div>${note || ''}
   </td>`;
 }
 
@@ -53,12 +76,13 @@ export function metricGrid(items) {
 // 0 秒对压力/恢复时长是有意义的数值，不能用 dur() 判成缺失
 export const dur0 = (sec) => (typeof sec === 'number' && isFinite(sec) ? (sec > 0 ? dur(sec) : '0m') : '—');
 
-// 带「→」的条目列表，日报的建议、周报的亮点都复用
-export function bulletList(items, color = ACCENT) {
+// 带「→」的条目列表，日报的建议、周报的亮点都复用；glyph='dot' 时换成实心圆点
+export function bulletList(items, color = ACCENT, glyph = 'arrow') {
+  const mark = glyph === 'dot' ? '•' : '→';
   return items
     .map(
       (t) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
-      <td width="16" valign="top" style="width:16px;font-size:13px;line-height:21px;color:${color};font-weight:700;">→</td>
+      <td width="16" valign="top" style="width:16px;font-size:13px;line-height:21px;color:${color};font-weight:700;">${mark}</td>
       <td style="font-size:13px;line-height:21px;color:#374151;padding:0 0 8px 0;">${t}</td>
     </tr></table>`
     )
@@ -106,12 +130,12 @@ export function signoffRow() {
   </td></tr>`;
 }
 
-export function shell(preheader, body, title = 'Oura 健康日报') {
+export function shell(preheader, body, title = 'Oura 健康日报', bg = '#f5f6f8') {
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head>
-<body style="margin:0;padding:0;background:#f5f6f8;">
-<div style="display:none;font-size:1px;color:#f5f6f8;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</div>
-<div style="background:#f5f6f8;padding:22px 10px 30px 10px;">
+<body style="margin:0;padding:0;background:${bg};">
+<div style="display:none;font-size:1px;color:${bg};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</div>
+<div style="background:${bg};padding:22px 10px 30px 10px;">
   <div style="max-width:600px;margin:0 auto;font-family:${FONT};">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;">
       ${body}

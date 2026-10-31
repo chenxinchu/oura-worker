@@ -17,6 +17,8 @@ const PLAN = [
   ['daily_resilience', false],
   ['daily_spo2', false],
   ['daily_cardiovascular_age', false],
+  // 用户标签是可选上下文：无权限或无记录都不影响健康数据报告。
+  ['tag', false],
   // Oura 的 VO2 Max 路径是大小写敏感的 vO2_max，内部仍用 vo2_max 作 key
   ['vO2_max', false, 'vo2_max'],
 ];

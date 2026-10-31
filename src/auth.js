@@ -7,7 +7,7 @@ const AUTHORIZE_URL = 'https://cloud.ouraring.com/oauth/authorize';
 const TOKEN_URL = 'https://api.ouraring.com/oauth/token';
 
 // 覆盖日报用到的全部数据类型
-const SCOPES = ['daily', 'personal', 'heartrate', 'spo2', 'heart_health', 'workout'];
+const SCOPES = ['daily', 'personal', 'heartrate', 'spo2', 'heart_health', 'workout', 'tag'];
 
 const KV_KEY = 'oauth';
 
