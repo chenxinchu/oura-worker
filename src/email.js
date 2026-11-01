@@ -56,31 +56,28 @@ function deltaWarn(c, compact = false) {
   }">${body}</span>`;
 }
 
-// 一句话状态：恢复档位 + 当日最突出的负荷，最多两个词
-function statusLabel(p) {
-  const parts = [];
-  const score = p.readiness_score;
-  if (typeof score === 'number') parts.push(score >= 85 ? '状态优秀' : score >= 70 ? '恢复平稳' : '恢复不足');
-  if (typeof p.stress_high === 'number' && p.stress_high > 2 * 3600) parts.unshift('高压力');
-  else if (typeof p.recovery_high === 'number' && p.recovery_high < 30 * 60) parts.unshift('恢复时间不足');
-  return parts.slice(0, 2).join(' · ');
-}
-
 // 卡内一句点评：解读只保留这一行，不再单独成卡
 function noteLine(text, color = D.sub) {
   if (!text) return '';
-  return `<div style="padding-top:9px;font-size:12px;line-height:18px;color:${color};">
-    <span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${color};opacity:.5;margin-right:6px;vertical-align:2px;"></span>${esc(text)}</div>`;
+  return `<div style="padding-top:9px;font-size:12px;line-height:18px;color:${color};"><b style="color:${D.title};">综合解读：</b>${esc(text)}</div>`;
+}
+
+function pressureFactors(p) {
+  const factors = p.coach?.pressure_factors || p.pressure_factors || [];
+  if (!factors.length) return '';
+  return `<div style="font-size:11px;line-height:18px;color:${D.sub};padding-top:7px;">主要伴随因素：${esc(factors.join('、'))}</div>`;
 }
 
 // 主卡底部的附属小卡：明显小一号，数值 + 基线 + 涨跌 + 内嵌一句点评，不再另开解读区块
 function miniCard({ label, color, score, baseText, tag, note }) {
+  const status = grade(score);
+  const statusColor = status.color;
   return `<td width="48%" valign="top" style="padding:12px 12px 11px 12px;background:#F7F7F9;border-radius:14px;">
     <div style="font-size:11px;color:${D.sub};line-height:15px;">
-      <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:5px;vertical-align:1px;"></span>${label}
+      <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${statusColor};margin-right:5px;vertical-align:1px;"></span>${label}
     </div>
     <div style="padding-top:4px;line-height:30px;white-space:nowrap;">
-      <span style="font-size:26px;font-weight:800;color:${D.ink};letter-spacing:-.5px;">${
+      <span style="font-size:26px;font-weight:800;color:${statusColor};letter-spacing:-.5px;">${
         typeof score === 'number' ? Math.round(score) : '—'
       }</span>
     </div>
@@ -95,17 +92,13 @@ function miniCard({ label, color, score, baseText, tag, note }) {
 function readinessHero(p) {
   const cmp = p.base_cmp || {};
   const g = grade(p.readiness_score);
-  const label = statusLabel(p);
-  const chip = label
-    ? `<div style="padding-top:10px;"><span style="display:inline-block;padding:5px 11px;background:#FFFFFF;border:1px solid #E0E1E6;border-radius:999px;font-size:11px;font-weight:600;color:${D.title};">
-        <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${D.ready};margin-right:5px;vertical-align:1px;"></span>${label}</span></div>`
-    : '';
+  const reason = p.insight?.readiness_reason || '准备度和最近一周接近';
 
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr><td valign="middle" style="background:#F7F7F9;border-radius:16px;padding:16px 14px 14px 14px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;">
-    <tr><td align="center" style="font-size:11px;color:${D.sub};line-height:15px;">准备度 · ${g.label}</td></tr>
+    <tr><td align="center" style="font-size:11px;color:${D.sub};line-height:15px;"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${g.color};margin-right:5px;vertical-align:1px;"></span>准备度</td></tr>
     <tr><td align="center" style="padding-top:2px;line-height:58px;white-space:nowrap;">
-      <span style="font-size:64px;font-weight:800;color:${D.ink};letter-spacing:-2px;">${
+      <span style="font-size:64px;font-weight:800;color:${g.color};letter-spacing:-2px;">${
         typeof p.readiness_score === 'number' ? Math.round(p.readiness_score) : '—'
       }</span>
     </td></tr>
@@ -113,7 +106,7 @@ function readinessHero(p) {
       cmp.readiness,
       true
     )}</td></tr>
-    <tr><td align="center">${chip}</td></tr>
+    <tr><td align="center" style="padding-top:10px;font-size:12px;line-height:18px;color:${D.title};">归因：${esc(reason)}</td></tr>
     </table>
   </td></tr></table>`;
 }
@@ -182,53 +175,56 @@ function sleepBar(d, cmp = {}) {
     </tr></table>`;
 }
 
-// 标准柱状趋势：三项评分各占一整行，柱高按 0–100 分比例显示。
-const BAR_H = 72;
-
-function barLight(color) {
-  if (color === D.sleep) return '#C4B5FD';
-  if (color === D.ready) return '#A7D9BC';
-  return '#9DCEF0';
+// 7 天三指标热力矩阵：不依赖折线或复杂 CSS，所有邮件客户端均可稳定呈现。
+function heatStyle(color, value) {
+  if (typeof value !== 'number') return { bg: '#ECEEF2', fg: '#9CA3AF' };
+  if (value >= 85) return { bg: color, fg: '#FFFFFF' };
+  if (value >= 70) {
+    if (color === D.sleep) return { bg: '#C4B5FD', fg: '#4C3F8F' };
+    if (color === D.ready) return { bg: '#A7D9BC', fg: '#276842' };
+    return { bg: '#9DCEF0', fg: '#245C8D' };
+  }
+  if (color === D.sleep) return { bg: '#ECE8FC', fg: '#655A8E' };
+  if (color === D.ready) return { bg: '#E3F3EA', fg: '#4C7960' };
+  return { bg: '#E4F0F9', fg: '#4B769A' };
 }
 
-function sparkline(title, trend, key, color, avg) {
-  const n = trend.length || 1;
-  const bars = trend
-    .map((t, i) => {
-      const last = i === n - 1;
-      const value = t[key];
-      const has = typeof value === 'number';
-      const height = has ? Math.max(5, Math.round((value / 100) * BAR_H)) : 4;
-      const fill = last && has ? color : has ? barLight(color) : '#ECEEF2';
-      return `<td width="${(100 / n).toFixed(2)}%" height="${BAR_H}" valign="bottom" align="center" style="height:${BAR_H}px;padding:0 3px;vertical-align:bottom;">
-        <div style="width:82%;height:${height}px;background:${fill};border-radius:4px 4px 1px 1px;margin:0 auto;font-size:0;line-height:0;">&nbsp;</div>
-      </td>`;
-    })
-    .join('');
+function heatCell(value, color, isToday) {
+  const tone = heatStyle(color, value);
+  const border = isToday ? `border:2px solid ${color};` : '';
+  return `<td align="center" style="padding:2px;">
+    <div style="background:${tone.bg};${border}border-radius:6px;font-size:10px;font-weight:700;color:${tone.fg};line-height:25px;height:25px;">${
+      typeof value === 'number' ? Math.round(value) : '—'
+    }</div>
+  </td>`;
+}
 
-  const labels = trend
+function heatRow(label, trend, key, color, avg) {
+  const cells = trend.map((item, index) => heatCell(item[key], color, index === trend.length - 1)).join('');
+  return `<tr>
+    <td width="54" style="width:54px;font-size:11px;font-weight:700;color:${D.title};line-height:16px;padding:4px 3px 4px 0;">${label}</td>
+    ${cells}
+    <td width="48" align="right" style="width:48px;font-size:10px;color:${D.sub};line-height:16px;padding:4px 0 4px 3px;">均 ${
+      typeof avg === 'number' ? Math.round(avg) : '—'
+    }</td>
+  </tr>`;
+}
+
+function heatmap(p) {
+  const days = p.trend || [];
+  const head = days
     .map(
-      (t, i) =>
-        `<td width="${(100 / n).toFixed(2)}%" align="center" style="font-size:9px;color:${
-          i === n - 1 ? D.title : '#B6B8C0'
-        };line-height:12px;padding:4px 0 0 0;">${t.label}</td>`
+      (item, index) =>
+        `<td align="center" style="font-size:9px;color:${index === days.length - 1 ? D.title : '#B6B8C0'};line-height:13px;padding:0 2px 4px 2px;">${item.label}</td>`
     )
     .join('');
-
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px 0;">
-    <tr><td style="padding:0 0 6px 0;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
-        <td style="font-size:14px;font-weight:700;color:${D.title};line-height:18px;">${title}</td>
-        <td align="right" style="font-size:11px;color:${D.sub};line-height:18px;">近 7 日均 ${
-          typeof avg === 'number' ? Math.round(avg) : '—'
-        }</td>
-      </tr></table>
-    </td></tr>
-    <tr><td>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${bars}</tr></table>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${labels}</tr></table>
-    </td></tr>
-  </table>`;
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;">
+    <tr><td width="54" style="width:54px;"></td>${head}<td width="48" style="width:48px;"></td></tr>
+    ${heatRow('睡眠', days, 'sleep', D.sleep, p.avg.sleep)}
+    ${heatRow('准备度', days, 'readiness', D.ready, p.avg.readiness)}
+    ${heatRow('活动', p.trend_act || days, 'activity', D.active, p.avg.activity)}
+  </table>
+  <div style="font-size:10px;line-height:15px;color:${D.sub};padding-top:6px;">活动按完整自然日统计，日期较睡眠提前一天。</div>`;
 }
 
 function adviceList(p) {
@@ -265,7 +261,7 @@ export function renderEmail(p) {
     ['浅睡', dur(d.light_sleep_duration), '', '', meta('light', dur)],
     ['清醒', dur(d.awake_time), '', '', meta('awake', dur)],
     ['平均心率', num(d.average_heart_rate, 0), 'bpm', '', meta('avg_hr', int)],
-    ['平均 HRV', num(d.average_hrv, 0), 'ms', '', meta('hrv', int)],
+    ['平均 HRV', num(d.average_hrv, 0), 'ms', '', meta('hrv', int), '#EFEFF2'],
     ['最低心率', num(d.lowest_heart_rate, 0), 'bpm', '', meta('low_hr', int)],
     ['呼吸频率', num(d.average_breath, 1), 'rpm', '', meta('breath', float1)],
   ];
@@ -274,20 +270,25 @@ export function renderEmail(p) {
     ['静息心率得分', num(p.ready_contrib.resting_heart_rate, 0), '分', '', meta('resting_hr', int)],
     ['HRV 平衡', num(p.ready_contrib.hrv_balance, 0), '分', '', meta('hrv_balance', int)],
     ['体温偏差', signed(p.temp_dev), '°C', '', meta('temp_dev', (v) => signed(v))],
-    ['恢复指数', num(p.ready_contrib.recovery_index, 0), '分', '', meta('recovery_index', int)],
+    ['恢复指数', num(p.ready_contrib.recovery_index, 0), '分', '', meta('recovery_index', int), '#EFEFF2'],
     ['血氧 SpO2', num(p.spo2, 1), '%', '', meta('spo2', float1)],
     ['呼吸紊乱指数', num(p.breathing_disturbance, 1), '', '', meta('breathing', float1)],
     ['心血管年龄', num(p.vascular_age, 0), '岁', '', meta('vascular_age', int)],
     ['VO₂ Max', num(p.vo2max, 1), '', '', meta('vo2max', float1)],
   ];
 
-  const actMetrics = [
+  const activityMetrics = [
+    ['活动负荷', p.activity_load?.level || '—'],
     ['步数', typeof p.steps === 'number' ? p.steps.toLocaleString('en-US') : '—', '', '', meta('steps', int)],
     ['活动消耗', num(p.active_cal, 0), 'kcal', '', meta('active_cal', int)],
     ['总消耗', num(p.total_cal, 0), 'kcal', '', meta('total_cal', int)],
     ['久坐时长', dur(p.sedentary), '', '', meta('sedentary', dur)],
-    ['高压力时长', dur0(p.stress_high), '', '', meta('stress_high', dur)],
-    ['恢复时长', dur0(p.recovery_high), '', '', meta('recovery_high', dur)],
+  ];
+
+  const pressureMetrics = [
+    ['压力负荷', p.pressure_load?.level || '—'],
+    ['高压力时长', dur0(p.stress_high), '', '', meta('stress_high', dur), '#EFEFF2'],
+    ['恢复时长', dur0(p.recovery_high), '', '', meta('recovery_high', dur), '#EFEFF2'],
     ['压力概况', p.stress_summary],
     ['抗压水平', p.resilience],
   ];
@@ -302,7 +303,7 @@ export function renderEmail(p) {
   const body = [
     letterHead('I have processed and compiled your physiological data captured overnight by Oura for this health briefing.'),
     header,
-    p.insight ? card(`<div style="border-left:3px solid ${riskColor};padding-left:10px;font-size:13px;line-height:22px;color:#374151;"><b style="color:${riskColor};">今日摘要：</b>${esc(p.insight.summary)}</div>`, '14px 16px', 'soft') : '',
+    p.insight ? card(`<div style="border-left:3px solid ${riskColor};padding-left:10px;font-size:13px;line-height:22px;color:#374151;"><b style="color:${riskColor};">报告摘要：</b>${esc(p.insight.summary)}</div>`, '14px 16px', 'soft') : '',
     // 准备度主卡：唯一的大数字，睡眠与活动降为卡内附属
     card(`${readinessHero(p)}<div style="height:16px;font-size:0;line-height:0;">&nbsp;</div>${scoreMiniPair(p)}`, '18px 18px 16px 18px', 'soft'),
     card(
@@ -311,12 +312,11 @@ export function renderEmail(p) {
       'soft'
     ),
     card(`${plainTitle('身体状态')}${metricGrid(bodyMetrics)}${noteLine(p.insight?.sections?.body)}`, '18px 18px 16px 18px', 'soft'),
-    card(`${plainTitle('活动与压力 · 昨日')}${metricGrid(actMetrics)}${noteLine(p.insight?.sections?.activity)}`, '18px 18px 16px 18px', 'soft'),
+    card(`${plainTitle('昨日活动')}${metricGrid(activityMetrics)}${noteLine(p.insight?.sections?.activity)}`, '18px 18px 16px 18px', 'soft'),
+    card(`${plainTitle('昨日压力')}${metricGrid(pressureMetrics)}${pressureFactors(p)}${noteLine(p.insight?.sections?.pressure)}`, '18px 18px 16px 18px', 'soft'),
     card(
       `${plainTitle('近 ' + p.days + ' 天趋势')}` +
-        sparkline('睡眠评分', p.trend, 'sleep', D.sleep, p.avg.sleep) +
-        sparkline('准备度', p.trend, 'readiness', D.ready, p.avg.readiness) +
-        sparkline('活动评分', p.trend_act || p.trend, 'activity', D.active, p.avg.activity) +
+        heatmap(p) +
         (p.insight ? `<div style="font-size:12px;line-height:19px;color:${D.sub};padding-top:2px;">${esc(p.insight.trend_summary)}</div>` : ''),
       '18px 18px 16px 18px',
       'soft'
@@ -372,11 +372,13 @@ export function renderText(p) {
     )}rpm${t('breath')}`,
     `心血管年龄 ${num(p.vascular_age, 0)} 岁${t('vascular_age')}｜VO₂ Max ${num(p.vo2max, 1)}${t('vo2max')}`,
     '',
-    `活动 ${num(p.activity_score)} 分 · ${ga.label}${t('activity')}`,
+    `昨日活动 ${num(p.activity_score)} 分 · ${ga.label}${t('activity')}`,
     `${typeof p.steps === 'number' ? p.steps.toLocaleString('en-US') + ' 步' : '步数缺失'}${t('steps')}｜消耗 ${num(
       p.active_cal
     )} kcal${t('active_cal')}`,
     `总消耗 ${num(p.total_cal)} kcal${t('total_cal')}｜久坐 ${dur(p.sedentary)}${t('sedentary')}`,
+    '',
+    `昨日压力 · ${p.pressure_load?.level || '—'}`,
     `高压力 ${dur0(p.stress_high)}${t('stress_high')}｜恢复 ${dur0(p.recovery_high)}${t('recovery_high')}`,
     `压力概况 ${p.stress_summary}｜抗压水平 ${p.resilience}`,
     '',
@@ -390,6 +392,7 @@ export function renderText(p) {
     if (sec.sleep) lines.push(`睡眠：${sec.sleep}`);
     if (sec.body) lines.push(`身体：${sec.body}`);
     if (sec.activity) lines.push(`活动：${sec.activity}`);
+    if (sec.pressure) lines.push(`压力：${sec.pressure}`);
     lines.push(`✅ 优先做：${p.insight.advice.priority}`);
     lines.push(`⚠️ 需要留意：${p.insight.advice.watch}`);
     lines.push(`❌ 尽量避开：${p.insight.advice.avoid}`);

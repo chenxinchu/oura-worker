@@ -66,9 +66,37 @@ function buildCoachContext(p, env) {
   const recoveryDrop = typeof p.ready_contrib?.recovery_index === 'number' && typeof recoveryBase.avg === 'number'
     ? p.ready_contrib.recovery_index - recoveryBase.avg
     : null;
+  const awakeBase = p.baseline?.awake?.avg;
+  const sleepShort = typeof p.detail?.total_sleep_duration === 'number' && typeof p.baseline?.total_sleep?.avg === 'number'
+    ? p.detail.total_sleep_duration < p.baseline.total_sleep.avg * 0.9
+    : false;
+  const sleepInterrupted = typeof p.detail?.awake_time === 'number' &&
+    (p.detail.awake_time > 30 * 60 || (typeof awakeBase === 'number' && p.detail.awake_time > awakeBase * 1.25));
+  const stressBase = p.baseline?.stress_high?.avg;
+  const highStress = typeof p.stress_high === 'number' &&
+    (p.stress_high > 2 * 3600 || (typeof stressBase === 'number' && p.stress_high > stressBase * 1.25));
+  const recoveryTimeLow = typeof p.recovery_high === 'number' && p.recovery_high < 30 * 60;
   let risk = 'green';
   if (!flags.period && ((typeof recoveryDrop === 'number' && recoveryDrop <= -15) || (typeof p.detail?.average_hrv === 'number' && typeof hrvBase.avg === 'number' && p.detail.average_hrv < hrvBase.avg * 0.75))) risk = 'red';
   else if ((typeof recoveryDrop === 'number' && recoveryDrop <= -8) || hrvLow) risk = 'yellow';
+  const readiness_drivers = [];
+  if (flags.period || flags.premenstrual) readiness_drivers.push('生理周期波动');
+  if (sleepInterrupted) readiness_drivers.push(profile.night_childcare ? '夜间睡眠被打断' : '夜间清醒偏多');
+  else if (sleepShort) readiness_drivers.push('睡眠时间比平时少');
+  if (hrvLow) readiness_drivers.push('HRV 比平时低');
+  if (typeof recoveryDrop === 'number' && recoveryDrop <= -8) readiness_drivers.push('恢复不够');
+  if (highStress || recoveryTimeLow) readiness_drivers.push('压力没有放下来');
+  const tag_factors = [];
+  if (flags.child_waking) tag_factors.push('宝宝夜醒频繁标签');
+  if (/加班/.test(tags.join('｜'))) tag_factors.push('加班标签');
+  if (flags.illness) tag_factors.push('感冒标签');
+  if (flags.strength) tag_factors.push('力量训练标签');
+  if ((flags.period || flags.premenstrual) && !tag_factors.length) tag_factors.push('生理周期标签');
+  const pressure_factors = [
+    ...tag_factors,
+    ...(profile.night_childcare && p.pressure_factors?.includes('夜间清醒偏多') ? ['夜间照料幼儿'] : []),
+    ...(p.pressure_factors || []),
+  ];
   return {
     profile,
     tags,
@@ -77,6 +105,8 @@ function buildCoachContext(p, env) {
     training_plan,
     baseline_mode: Object.values(p.baseline || {}).some((b) => b?.n > 0 && b.n < 7) ? '样本不足7天，部分指标仅参考昨日' : '近7天个人基线',
     risk,
+    readiness_drivers: readiness_drivers.slice(0, 3),
+    pressure_factors: [...new Set(pressure_factors)].slice(0, 3),
   };
 }
 
@@ -110,8 +140,21 @@ export function buildDailyInsightContext(p, env) {
         average_breath: p.detail?.average_breath ?? null,
       },
       readiness: { contributors: p.ready_contrib, temperature_deviation: p.temp_dev },
-      activity: { day: p.act_day, steps: p.steps, active_calories: p.active_cal, total_calories: p.total_cal, sedentary: { minutes: durationMinutes(p.sedentary), display: durationText(p.sedentary) } },
-      stress: { high: { minutes: durationMinutes(p.stress_high), display: durationText(p.stress_high) }, recovery: { minutes: durationMinutes(p.recovery_high), display: durationText(p.recovery_high) }, summary: p.stress_summary },
+      activity: {
+        day: p.act_day,
+        steps: p.steps,
+        active_calories: p.active_cal,
+        total_calories: p.total_cal,
+        sedentary: { minutes: durationMinutes(p.sedentary), display: durationText(p.sedentary) },
+        load: p.activity_load,
+      },
+      stress: {
+        high: { minutes: durationMinutes(p.stress_high), display: durationText(p.stress_high) },
+        recovery: { minutes: durationMinutes(p.recovery_high), display: durationText(p.recovery_high) },
+        summary: p.stress_summary,
+        load: p.pressure_load,
+        factors: coach.pressure_factors,
+      },
       health: { spo2: p.spo2, apnea_index: p.breathing_disturbance, cardio_age: p.vascular_age, vo2max: p.vo2max },
       baseline: aiBaseline(p.baseline),
       changes_vs_yesterday: { sleep_score: p.cmp?.sleep || null, readiness_score: p.cmp?.readiness || null, activity_score: p.cmp?.activity || null },
@@ -150,13 +193,19 @@ function sleepSentence(p, coach) {
   const total = p.detail?.total_sleep_duration;
   const eff = p.detail?.efficiency;
   const awake = p.detail?.awake_time;
-  const parts = [typeof total === 'number' ? `总睡眠 ${dur(total)}` : '睡眠数据缺失'];
-  if (typeof awake === 'number' && awake > 1800) {
-    parts.push(coach.profile.night_childcare ? '夜间清醒来自照料中断' : '夜间清醒是主要消耗');
-  } else if (typeof eff === 'number') {
-    parts.push(eff >= 85 ? '睡眠结构稳定' : '睡眠效率偏低');
+  const hrv = p.detail?.average_hrv;
+  const hrvBase = p.baseline?.hrv?.avg;
+  const interrupted = typeof awake === 'number' && awake > 1800;
+  const short = typeof total === 'number' && typeof p.baseline?.total_sleep?.avg === 'number' && total < p.baseline.total_sleep.avg * 0.9;
+  const hrvLow = typeof hrv === 'number' && typeof hrvBase === 'number' && hrv < hrvBase * 0.9;
+  if (interrupted && hrvLow) {
+    return coach.profile.night_childcare
+      ? '整体睡得不够连贯，夜间照料中断和 HRV 回落一起拖慢恢复'
+      : '整体睡得不够连贯，夜间清醒和 HRV 回落一起拖慢恢复';
   }
-  return parts.join('，');
+  if (short || (typeof eff === 'number' && eff < 85)) return '整体睡眠质量偏弱，睡眠时长或效率没有回到平时水平';
+  if (typeof total === 'number') return '整体睡眠比较平稳，时长和夜间恢复没有明显短板';
+  return '睡眠数据不足，暂时无法判断整体恢复情况';
 }
 
 function bodySentence(p, coach) {
@@ -164,48 +213,47 @@ function bodySentence(p, coach) {
   const hrvBase = p.baseline?.hrv?.avg;
   const recovery = p.ready_contrib?.recovery_index;
   const recoveryBase = p.baseline?.recovery?.avg;
-  const parts = [];
-  if (typeof hrv === 'number') {
-    if (typeof hrvBase !== 'number') parts.push(`HRV ${Math.round(hrv)}ms`);
-    else parts.push(hrv < hrvBase * 0.95 ? 'HRV 回落' : hrv > hrvBase * 1.05 ? 'HRV 抬升' : 'HRV 持平');
-  }
-  if (typeof recovery === 'number') {
-    const weak = typeof recoveryBase === 'number' ? recovery < recoveryBase - 8 : recovery < 70;
-    parts.push(weak ? '恢复储备偏弱' : '恢复储备充足');
-  }
-  if (coach.flags.period || coach.flags.premenstrual) parts.push('波动优先按生理周期理解');
-  else if (coach.risk !== 'green') parts.push('压力负荷偏高');
-  return parts.join('，') || '生理指标数据缺失';
+  const hrvLow = typeof hrv === 'number' && typeof hrvBase === 'number' && hrv < hrvBase * 0.95;
+  const recoveryWeak = typeof recovery === 'number' && (typeof recoveryBase === 'number' ? recovery < recoveryBase - 8 : recovery < 70);
+  if (coach.flags.period || coach.flags.premenstrual) return '身体指标有些波动，优先按生理周期带来的变化理解';
+  if (hrvLow && recoveryWeak) return '身体恢复偏弱，HRV 回落和恢复储备不足是主要原因';
+  if (coach.risk !== 'green') return '身体还没完全缓过来，恢复和压力指标需要多留意';
+  if (typeof hrv === 'number' || typeof recovery === 'number') return '身体状态整体平稳，恢复指标和心率表现没有明显异常';
+  return '身体状态数据不足，暂时无法形成综合判断';
 }
 
 function activitySentence(p) {
   const stepsBase = p.baseline?.steps?.avg;
-  const parts = [];
-  if (typeof p.steps === 'number') {
-    const high = typeof stepsBase === 'number' ? p.steps > stepsBase * 1.1 : p.steps > 10000;
-    parts.push(high ? '昨日活动量偏高' : '昨日活动量适中');
-  } else {
-    parts.push('步数数据缺失');
-  }
-  if (typeof p.stress_high === 'number') parts.push(p.stress_high > 2 * 3600 ? '高压持续' : '高压时长可控');
-  if (typeof p.recovery_high === 'number') parts.push(p.recovery_high < 30 * 60 ? '主动恢复时间不足' : '主动恢复充足');
-  return parts.join('，');
+  const highActivity = typeof p.steps === 'number' && (typeof stepsBase === 'number' ? p.steps > stepsBase * 1.1 : p.steps > 10000);
+  if (p.activity_load?.level === '偏高' || highActivity) return '昨天活动量偏高，今天需要给身体留出恢复空间';
+  if (p.activity_load?.level === '偏低') return '昨天活动量偏少，今天可安排一段轻松活动';
+  if (typeof p.steps === 'number') return '昨天活动节奏适中，步数和消耗都在平时范围附近';
+  return '活动数据不足，暂时无法形成综合判断';
+}
+
+function pressureSentence(p, coach) {
+  const factors = coach.pressure_factors || [];
+  const suffix = factors.length ? `，主要伴随${factors.slice(0, 2).join('、')}` : '';
+  if (p.pressure_load?.level === '偏高') return `压力没有充分释放${suffix}`;
+  if (p.pressure_load?.level === '需要留意') return `压力和恢复之间不够平衡${suffix}`;
+  return factors.length ? `压力整体可控，但仍需留意${factors[0]}` : '压力和恢复时间整体比较平衡';
 }
 
 // 模型尚未启用时，沿用既有规则建议，确保报告质量和发送成功率不受外部服务影响。
 export function buildDailyRuleInsight(p) {
   const coach = p.coach || buildCoachContext(p);
+  p.coach = coach;
   const summary = coach.flags.rest_day
-    ? '今天休息不跑步，以碎片化恢复为主。'
+    ? '今天先休息，不安排跑步；分几次做短暂拉伸就够了。'
     : coach.flags.period
-    ? '生理周期波动优先，今天保持低强度活动。'
+    ? '生理周期带来的波动优先考虑，今天用慢走和拉伸替代高强度训练。'
     : coach.risk === 'red'
-    ? '恢复明显偏离基线，今天主动减负。'
+    ? '昨天消耗和压力都偏高，身体还没缓过来；今天别加练，先把节奏放慢。'
     : coach.risk === 'yellow'
-    ? '恢复偏弱，今天降低训练强度。'
+    ? '恢复比平时差一些，今天把训练降一级；优先做轻松活动和放松。'
     : coach.run_day
-    ? '恢复稳定，跑步以轻松配速完成。'
-    : '状态平稳，今天维持轻量恢复节奏。';
+    ? '恢复比较平稳，可以跑步；控制在轻松配速，不用追速度。'
+    : '整体状态平稳，按原计划活动；晚上留一点时间让自己放松下来。';
   const priority = coach.flags.rest_day
     ? '今天不跑步；分两次做 5 分钟拉伸即可。'
     : coach.flags.period
@@ -218,10 +266,12 @@ export function buildDailyRuleInsight(p) {
   return validateDailyInsight({
     source: 'rules',
     summary,
+    readiness_reason: coach.readiness_drivers.length ? coach.readiness_drivers.join('，') : '今天的准备度和最近一周接近',
     sections: {
       sleep: sleepSentence(p, coach),
       body: bodySentence(p, coach),
       activity: activitySentence(p),
+      pressure: pressureSentence(p, coach),
     },
     trend_summary: `近7天睡眠均分 ${score(p.avg?.sleep) ?? '—'}，准备度 ${score(p.avg?.readiness) ?? '—'}，以个人趋势为准。`,
     advice: {

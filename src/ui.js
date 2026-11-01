@@ -52,23 +52,26 @@ export function plainTitle(text, color = D.title, size = 14) {
   return `<div style="font-size:${size}px;font-weight:700;color:${color};line-height:20px;padding:0 0 12px 0;">${text}</div>`;
 }
 
-// item = [label, value, unit?, deltaHtml?, noteHtml?]
+// item = [label, value, unit?, deltaHtml?, noteHtml?, background?]
 // deltaHtml 是「较前一日 / 较 7 日均」的小字，紧跟在数值后面，没有就不占位
-export function metricCell(item) {
-  if (!item) return '<td width="50%"></td>';
-  const [label, value, unit, extra, note] = item;
+export function metricCell(item, side = 'left') {
+  const padding = side === 'left' ? '4px 4px 4px 0' : '4px 0 4px 4px';
+  if (!item) return `<td width="50%" style="padding:${padding};"></td>`;
+  const [label, value, unit, extra, note, tone] = item;
   const u = unit ? `<span style="font-size:11px;font-weight:400;color:#9ca3af;"> ${unit}</span>` : '';
   const tail = extra ? `<span style="margin-left:7px;">${extra}</span>` : '';
-  return `<td width="50%" style="padding:6px 12px 6px 0;vertical-align:top;">
-    <div style="font-size:11px;color:${MUTED};line-height:16px;">${label}</div>
-    <div style="font-size:16px;font-weight:700;color:${INK};line-height:22px;">${value}${u}${tail}</div>${note || ''}
+  return `<td width="50%" style="padding:${padding};vertical-align:top;">
+    <div style="background:${tone || '#F7F7F9'};border-radius:10px;padding:9px 10px 8px 10px;">
+      <div style="font-size:11px;color:${MUTED};line-height:16px;">${label}</div>
+      <div style="font-size:16px;font-weight:700;color:${INK};line-height:22px;">${value}${u}${tail}</div>${note || ''}
+    </div>
   </td>`;
 }
 
 export function metricGrid(items) {
   let rows = '';
   for (let i = 0; i < items.length; i += 2) {
-    rows += `<tr>${metricCell(items[i])}${metricCell(items[i + 1])}</tr>`;
+    rows += `<tr>${metricCell(items[i], 'left')}${metricCell(items[i + 1], 'right')}</tr>`;
   }
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;">${rows}</table>`;
 }

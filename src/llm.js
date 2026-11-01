@@ -5,9 +5,10 @@ const PERIOD_PROMPT = `你是健康趋势报告的文字编辑，不是医生。
 每项建议应先解释一个已知事实，再给出低风险的作息、活动或恢复行动。只输出 JSON，不要 Markdown 或额外字段，格式必须是：{"summary":"...","priorities":[{"title":"...","reason":"...","action":"..."}],"caution":"健康趋势参考，不构成医疗建议。"}。priorities 最多 3 项。`;
 
 const DAILY_PROMPT = `你是 Jarvis，基于输入的 Oura Ring 聚合生理数据生成中文日报。风格冷静、专业、简洁，不要鸡汤；不是医生，不诊断疾病、不推断病因、不建议药物或治疗。只可引用 facts 中存在的数值、标签和规则，不能计算或编造。
-目标是“数据卡 + 卡内一句点评”：summary 只写“核心矛盾 + 一个关键证据 + 今天策略”，不重复分数、不超过 50 个中文字符；sections.sleep、sections.body、sections.activity 每段只写一句话，不超过 26 个中文字符，结构是“一个判断 + 一个证据”，不使用句号结尾，不并列罗列指标。这三句会直接内嵌在对应数据卡片的底部，必须能脱离上下文读懂。优先解释 HRV、恢复指数、高压力/恢复时长、睡眠中断与活动负荷的联动。不要逐项复述全部数字。所有时长一律使用输入里的 display 或 h/m 格式，绝不输出秒数或原始秒值。
+目标是“数据卡 + 卡内一句点评”：summary 是“报告摘要”，用 1–2 句完成全量指标联动判断和当天的组合行动方向，最多 100 个中文字符。它必须综合睡眠、HRV、恢复、心率、压力和活动负荷中真正相关的部分，并遵循 facts.coaching_rules 中已经计算好的个人标签和规则；不要只复述单个现象。readiness_reason 是准备度归因，只从 facts.coaching_rules.readiness_drivers 中提炼 1–3 个主要因素，写成不超过 50 字的通俗短句，不要自行猜测新的原因。sections.sleep、sections.body、sections.activity、sections.pressure 分别是对应卡片的“综合解读”：每段只写一句、不超过 40 个中文字符，先给整体判断，再指出最主要的 1–2 个影响因素；必须综合该卡内的相关指标，禁止逐项念数据、指标名堆叠或只描述单一现象。activity 只分析活动负荷与久坐，pressure 只分析高压力、恢复时间和 facts.stress.factors 中已筛选的伴随因素，不能把伴随因素写成确定因果。这四句会直接内嵌在对应数据卡片的底部，必须能脱离上下文读懂。所有时长一律使用输入里的 display 或 h/m 格式，绝不输出秒数或原始秒值。
+全篇使用自然、日常的中文：先说人能听懂的结论，再补一个必要数据；每句最多出现 1–2 个指标名。避免“自主神经”“负荷叠加”“神经恢复不足”等生硬术语，可改写为“身体还没缓过来”“昨天动得多但没有放松下来”。
 标签优先级已由 facts.coaching_rules 决定，必须遵守。夜间照料幼儿导致的清醒优先描述为被动中断；经期/经前波动不得轻易判为透支；跑步安排必须遵守 training_plan。基线样本不足时必须说明只作有限参考。不能把呼吸紊乱指数为 0 写成医疗诊断结论。
-只输出 JSON，不要 Markdown 或额外字段。必须完整输出：{"summary":"...","sections":{"sleep":"...","body":"...","activity":"..."},"trend_summary":"...","advice":{"priority":"...","watch":"...","avoid":"...","observe":"..."},"caution":"健康趋势参考，不构成医疗建议。"}。sections 的三个值都是字符串，不是数组，每段只表达一个判断。advice 的四个字段只能写直接行动句，不得重复数值、指标、原因或“在…背景下”等解释；这些依据只放在 sections 中。不能使用“注意休息”“保持节奏”等空泛表达。`;
+只输出 JSON，不要 Markdown 或额外字段。必须完整输出：{"summary":"...","readiness_reason":"...","sections":{"sleep":"...","body":"...","activity":"...","pressure":"..."},"trend_summary":"...","advice":{"priority":"...","watch":"...","avoid":"...","observe":"..."},"caution":"健康趋势参考，不构成医疗建议。"}。sections 的四个值都是字符串，不是数组，每段只表达一个判断。advice 的四个字段只能写直接行动句，不得重复数值、指标、原因或“在…背景下”等解释；这些依据只放在 sections 中。不能使用“注意休息”“保持节奏”等空泛表达。`;
 
 function completionText(data) {
   const content = data?.choices?.[0]?.message?.content;
@@ -25,10 +26,10 @@ export async function generateLlmInsight(env, context, diagnostics = false) {
   if (!env.LLM_API_KEY || !env.LLM_BASE_URL || !env.LLM_MODEL) return null;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
+  let timeout;
   try {
     const base = env.LLM_BASE_URL.replace(/\/+$/, '');
-    const res = await fetch(`${base}/chat/completions`, {
+    const request = fetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.LLM_API_KEY}`,
@@ -49,6 +50,14 @@ export async function generateLlmInsight(env, context, diagnostics = false) {
       }),
       signal: controller.signal,
     });
+    // 某些上游连接不会及时响应 abort；race 确保 Worker 不会被模型请求拖住。
+    const deadline = new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new Error('LLM request timed out'));
+      }, 12_000);
+    });
+    const res = await Promise.race([request, deadline]);
     if (!res.ok) {
       const detail = `HTTP ${res.status}: ${(await res.text()).slice(0, 500)}`;
       console.log('[llm-insight-failed]', `HTTP ${res.status}`);
@@ -110,12 +119,17 @@ export function dailyProbeContext() {
       scores: { sleep: 80, readiness: 75, activity: 70 },
       sleep: { total_sleep_duration: 25200, efficiency: 88, deep_sleep_duration: 4800, rem_sleep_duration: 6000, awake_time: 1800, average_hrv: 45, average_breath: 14 },
       readiness: { contributors: { recovery_index: 72, resting_heart_rate: 75 }, temperature_deviation: 0.1 },
-      activity: { steps: 8000, active_calories: 400, total_calories: 2000, sedentary_time: 24000 },
-      stress: { high: 3600, recovery: 7200, summary: 'normal' },
+      activity: { steps: 8000, active_calories: 400, total_calories: 2000, sedentary_time: 24000, load: { level: '适中' } },
+      stress: { high: 3600, recovery: 7200, summary: 'normal', load: { level: '需要留意' }, factors: ['睡眠时间比平时少'] },
       health: { spo2: 97, apnea_index: 2, cardio_age: 32, vo2max: 40 },
       baseline: { sleep: { avg: 78, n: 7 }, hrv: { avg: 48, n: 7 }, recovery: { avg: 75, n: 7 } },
       tags: [],
-      coaching_rules: { training_plan: '恢复、拉伸或日常活动', baseline_mode: '近7天个人基线', risk: 'green' },
+      coaching_rules: {
+        training_plan: '恢复、拉伸或日常活动',
+        baseline_mode: '近7天个人基线',
+        risk: 'green',
+        readiness_drivers: ['睡眠时间比平时少', 'HRV 比平时低'],
+      },
     },
   };
 }

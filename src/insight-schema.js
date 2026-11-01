@@ -1,9 +1,9 @@
 // 洞察输出的边界：模型只能补充解释和建议，不能改写已计算的健康事实。
 
-export const INSIGHT_PROMPT_VERSION = 'v9';
+export const INSIGHT_PROMPT_VERSION = 'v13';
 export const INSIGHT_CAUTION = '健康趋势参考，不构成医疗建议。';
 
-const MAX = { summary: 240, title: 60, reason: 180, action: 240, caution: 100, section: 60 };
+const MAX = { summary: 240, title: 60, reason: 180, action: 240, caution: 100, section: 72 };
 
 function text(v, max) {
   if (typeof v !== 'string') return null;
@@ -69,21 +69,24 @@ function shortMap(value, keys) {
 // 日报采用“数据卡 + 卡内一句点评”。缺任一段时整体降级到本地规则，避免半份 AI 文案。
 export function validateDailyInsight(value) {
   if (!value || typeof value !== 'object') return null;
-  // 提示词目标是 50 字；留出少量模型波动，避免一条略长摘要导致整份日报降级。
-  const summary = text(value.summary, 70);
+  // 报告摘要允许两句综合判断与行动方向；仍限制长度，避免挤占数据卡。
+  const summary = text(value.summary, 120);
+  const readiness_reason = text(value.readiness_reason, 80);
   const sections = value.sections && typeof value.sections === 'object'
     ? {
         sleep: sentence(value.sections.sleep),
         body: sentence(value.sections.body),
         activity: sentence(value.sections.activity),
+        pressure: sentence(value.sections.pressure),
       }
     : null;
   const trend_summary = text(value.trend_summary, 120);
   const advice = shortMap(value.advice, ['priority', 'watch', 'avoid', 'observe']);
-  if (!summary || !sections?.sleep || !sections?.body || !sections?.activity || !trend_summary || !advice) return null;
+  if (!summary || !readiness_reason || !sections?.sleep || !sections?.body || !sections?.activity || !sections?.pressure || !trend_summary || !advice) return null;
   return {
     source: value.source === 'llm' ? 'llm' : 'rules',
     summary,
+    readiness_reason,
     sections,
     trend_summary,
     advice,

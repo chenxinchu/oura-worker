@@ -301,6 +301,48 @@ export function buildPayload(raw, days, reportDay) {
     base.recovery_high.push(st.recovery_high);
   }
   const baseline = Object.fromEntries(Object.entries(base).map(([key, values]) => [key, avgWithCount(values)]));
+  const above = (value, ref, ratio = 1.15) =>
+    typeof value === 'number' && typeof ref?.avg === 'number' && value > ref.avg * ratio;
+  const below = (value, ref, ratio = 0.85) =>
+    typeof value === 'number' && typeof ref?.avg === 'number' && value < ref.avg * ratio;
+
+  const activityHighSignals = [
+    above(act.score, baseline.activity, 1.08),
+    above(act.steps, baseline.steps),
+    above(act.active_calories, baseline.active_cal),
+  ].filter(Boolean).length;
+  const activityLowSignals = [
+    below(act.score, baseline.activity),
+    below(act.steps, baseline.steps),
+    below(act.active_calories, baseline.active_cal),
+  ].filter(Boolean).length;
+  const activity_load = {
+    level: activityHighSignals >= 2 ? '偏高' : activityLowSignals >= 2 ? '偏低' : '适中',
+    high: activityHighSignals >= 2,
+  };
+
+  const highStress = above(stress.stress_high, baseline.stress_high, 1.25) || (stress.stress_high || 0) > 2 * 3600;
+  const lowRecoveryTime = below(stress.recovery_high, baseline.recovery_high, 0.7) ||
+    (typeof stress.recovery_high === 'number' && stress.recovery_high < 30 * 60);
+  const pressure_load = {
+    level: highStress && lowRecoveryTime ? '偏高' : !highStress && !lowRecoveryTime ? '适中' : '需要留意',
+    high: highStress && lowRecoveryTime,
+  };
+
+  const pressure_factors = [];
+  if (typeof detail.awake_time === 'number' && (detail.awake_time > 30 * 60 || above(detail.awake_time, baseline.awake, 1.25))) {
+    pressure_factors.push('夜间清醒偏多');
+  }
+  if (below(detail.average_hrv, baseline.hrv, 0.9)) pressure_factors.push('HRV 低于平时');
+  if (typeof (ready.contributors || {}).recovery_index === 'number' && typeof baseline.recovery?.avg === 'number' &&
+    (ready.contributors || {}).recovery_index < baseline.recovery.avg - 8) {
+    pressure_factors.push('恢复储备不足');
+  }
+  if (typeof ready.temperature_deviation === 'number' && typeof baseline.temp?.avg === 'number' &&
+    Math.abs(ready.temperature_deviation - baseline.temp.avg) >= 0.3) {
+    pressure_factors.push('体温偏离平时水平');
+  }
+  if (activity_load.high) pressure_factors.push('活动负荷偏高');
   const baseKey = {
     sleep: 'sleep', readiness: 'readiness', activity: 'activity', total_sleep: 'total_sleep', time_in_bed: 'time_in_bed',
     light: 'light', awake: 'awake', deep: 'deep', rem: 'rem', efficiency: 'efficiency', latency: 'latency',
@@ -337,6 +379,9 @@ export function buildPayload(raw, days, reportDay) {
     stress_summary: STRESS_CN[stress.day_summary] || '—',
     resilience: RESIL_CN[resil.level] || '—',
     user_tags: tagsOn(raw.tag, day),
+    activity_load,
+    pressure_load,
+    pressure_factors: pressure_factors.slice(0, 3),
     spo2: (spo2.spo2_percentage || {}).average ?? null,
     breathing_disturbance: spo2.breathing_disturbance_index ?? null,
     vascular_age: cv.vascular_age ?? null,
