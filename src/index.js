@@ -142,7 +142,8 @@ export function needStart(kinds, today) {
   let s = addDays(today, -DAYS);
   for (const k of kinds) {
     const r = k === 'monthly' ? monthRange(today) : k === 'weekly' ? weekRange(today) : null;
-    if (r && r.prevStart < s) s = r.prevStart;
+    const start = k === 'weekly' && r ? addDays(r.start, -21) : r?.prevStart;
+    if (start && start < s) s = start;
   }
   return s;
 }

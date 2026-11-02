@@ -10,6 +10,8 @@ const score = (value) => (typeof value === 'number' ? Math.round(value) : null);
 const durationMinutes = (value) => (typeof value === 'number' && isFinite(value) ? Math.round(value / 60) : null);
 const durationText = (value) => dur(value);
 const DURATION_BASELINES = new Set(['total_sleep', 'deep', 'rem', 'awake', 'sedentary', 'stress_high', 'recovery_high']);
+const WEEKLY_INSIGHT_PROMPT_VERSION = 'weekly-v2';
+const MONTHLY_INSIGHT_PROMPT_VERSION = 'monthly-v2';
 
 function aiBaseline(baseline) {
   return Object.fromEntries(
@@ -45,13 +47,31 @@ function tagFlags(tags) {
     rest_day: /今天休息不跑步|休息不跑步/.test(joined),
     strength: /力量训练|strength/.test(joined),
     illness: /感冒|cold|sick/.test(joined),
+    overtime: /加班|overtime|overwork/.test(joined),
   };
+}
+
+// 每个标签都保留原文和使用边界，避免模型把用户记录直接写成医学因果。
+function tagContext(tags) {
+  return tags.map((label) => {
+    const value = label.toLowerCase();
+    let use = '用户记录背景；只在有对应指标时纳入判断，不推断因果。';
+    if (/生理期（经期）|经期|menstruation|period/.test(value)) use = '生理周期背景；优先按周期波动理解相关指标。';
+    else if (/生理期（经前）|经前|premenstrual|pms/.test(value)) use = '经前周期背景；优先按周期波动理解相关指标。';
+    else if (/宝宝夜醒频繁|child.*wake|baby.*wake/.test(value)) use = '夜间照料背景；结合夜间清醒和恢复指标判断。';
+    else if (/今天休息不跑步|休息不跑步/.test(value)) use = '训练安排限制；当天不安排跑步。';
+    else if (/力量训练|strength/.test(value)) use = '近期训练背景；结合恢复、HRV 和压力判断。';
+    else if (/感冒|cold|sick/.test(value)) use = '身体不适记录；结合恢复和 HRV 判断，不作诊断。';
+    else if (/加班|overtime|overwork/.test(value)) use = '工作负荷背景；结合压力和恢复时间判断。';
+    return { label, use };
+  });
 }
 
 function buildCoachContext(p, env) {
   const profile = profileFromEnv(env);
   const tags = Array.isArray(p.user_tags) ? p.user_tags : [];
   const flags = tagFlags(tags);
+  const tag_context = tagContext(tags);
   const weekday = new Date(`${p.report_day}T00:00:00Z`).getUTCDay();
   const run_day = profile.run_days.includes(weekday);
   const hrvBase = p.baseline?.hrv || {};
@@ -81,14 +101,18 @@ function buildCoachContext(p, env) {
   else if ((typeof recoveryDrop === 'number' && recoveryDrop <= -8) || hrvLow) risk = 'yellow';
   const readiness_drivers = [];
   if (flags.period || flags.premenstrual) readiness_drivers.push('生理周期波动');
-  if (sleepInterrupted) readiness_drivers.push(profile.night_childcare ? '夜间睡眠被打断' : '夜间清醒偏多');
+  if (flags.child_waking && sleepInterrupted) readiness_drivers.push('宝宝夜醒记录下夜间睡眠被打断');
+  else if (sleepInterrupted) readiness_drivers.push(profile.night_childcare ? '夜间睡眠被打断' : '夜间清醒偏多');
   else if (sleepShort) readiness_drivers.push('睡眠时间比平时少');
+  if (flags.illness && (hrvLow || (typeof recoveryDrop === 'number' && recoveryDrop <= -8))) readiness_drivers.push('感冒记录下恢复偏弱');
+  if (flags.overtime && (highStress || recoveryTimeLow)) readiness_drivers.push('加班记录下压力没有放下来');
+  if (flags.strength && (hrvLow || (typeof recoveryDrop === 'number' && recoveryDrop <= -8))) readiness_drivers.push('力量训练记录下恢复不足');
   if (hrvLow) readiness_drivers.push('HRV 比平时低');
   if (typeof recoveryDrop === 'number' && recoveryDrop <= -8) readiness_drivers.push('恢复不够');
   if (highStress || recoveryTimeLow) readiness_drivers.push('压力没有放下来');
   const tag_factors = [];
   if (flags.child_waking) tag_factors.push('宝宝夜醒频繁标签');
-  if (/加班/.test(tags.join('｜'))) tag_factors.push('加班标签');
+  if (flags.overtime) tag_factors.push('加班标签');
   if (flags.illness) tag_factors.push('感冒标签');
   if (flags.strength) tag_factors.push('力量训练标签');
   if ((flags.period || flags.premenstrual) && !tag_factors.length) tag_factors.push('生理周期标签');
@@ -100,6 +124,7 @@ function buildCoachContext(p, env) {
   return {
     profile,
     tags,
+    tag_context,
     flags,
     run_day,
     training_plan,
@@ -159,7 +184,8 @@ export function buildDailyInsightContext(p, env) {
       baseline: aiBaseline(p.baseline),
       changes_vs_yesterday: { sleep_score: p.cmp?.sleep || null, readiness_score: p.cmp?.readiness || null, activity_score: p.cmp?.activity || null },
       trend: p.avg,
-      tags: coach.tags,
+      // 所有标签均带使用边界传给模型，避免只把少数已识别标签用于判断。
+      tags: coach.tag_context,
       coaching_rules: coach,
     },
   };
@@ -169,12 +195,13 @@ export function buildPeriodInsightContext(p) {
   return {
     kind: p.kind,
     key: `${p.period.start}:${p.period.end}`,
-    prompt_version: INSIGHT_PROMPT_VERSION,
+    prompt_version: p.kind === 'weekly' ? WEEKLY_INSIGHT_PROMPT_VERSION : p.kind === 'monthly' ? MONTHLY_INSIGHT_PROMPT_VERSION : INSIGHT_PROMPT_VERSION,
     facts: {
       period: { start: p.period.start, end: p.period.end, coverage: p.coverage, days_with_sleep: p.cur.n.sleep },
       averages: p.cur.avg,
       previous_averages: p.has_prev ? p.prev.avg : null,
       comparison: p.rows.map(({ k, cur, prev, delta }) => ({ k, cur, prev: p.has_prev ? prev : null, delta: p.has_prev ? delta : null })),
+      tags: p.user_tags || [],
     },
   };
 }
@@ -231,6 +258,38 @@ function activitySentence(p) {
   return '活动数据不足，暂时无法形成综合判断';
 }
 
+function trendState(p, key) {
+  const avg = score(p.avg?.[key]);
+  const baseline = p.baseline?.[key];
+  const base = score(baseline?.avg);
+  if (avg === null || base === null || baseline.n < 5) return null;
+  if (avg <= base - 4) return 'low';
+  if (avg >= base + 4) return 'high';
+  return 'steady';
+}
+
+function trendSentence(p) {
+  const sleep = trendState(p, 'sleep');
+  const readiness = trendState(p, 'readiness');
+  const activity = trendState(p, 'activity');
+  if (!sleep || !readiness || !activity) {
+    return '近几天的恢复节奏还在形成，今天先看睡眠、准备度和活动是否协调，再决定训练强度。';
+  }
+  if (sleep === 'low' && readiness === 'low') {
+    return '近几天睡眠和准备度没有形成稳定恢复节奏，活动安排应跟着收一收；今天以轻松活动和规律作息为主，避免额外加量。';
+  }
+  if (activity === 'high' && (sleep === 'low' || readiness === 'low')) {
+    return '近几天活动推进较快，但恢复没有同步跟上；今天把训练留在舒适强度，并给晚上留出放松空间。';
+  }
+  if (activity === 'low' && (sleep === 'low' || readiness === 'low')) {
+    return '近几天活动已收敛，但恢复节奏仍不够稳；今天维持轻松活动，优先把睡眠和放松安排完整。';
+  }
+  if (activity === 'high') {
+    return '近几天活动节奏积极，睡眠和准备度仍能配合；今天可按计划推进，但不需要额外堆高强度。';
+  }
+  return '近几天睡眠、准备度和活动的配合较平稳；今天按原计划活动，继续给恢复留出余量。';
+}
+
 function pressureSentence(p, coach) {
   const factors = coach.pressure_factors || [];
   const suffix = factors.length ? `，主要伴随${factors.slice(0, 2).join('、')}` : '';
@@ -243,7 +302,7 @@ function pressureSentence(p, coach) {
 export function buildDailyRuleInsight(p) {
   const coach = p.coach || buildCoachContext(p);
   p.coach = coach;
-  const summary = coach.flags.rest_day
+  const summaryBody = coach.flags.rest_day
     ? '今天先休息，不安排跑步；分几次做短暂拉伸就够了。'
     : coach.flags.period
     ? '生理周期带来的波动优先考虑，今天用慢走和拉伸替代高强度训练。'
@@ -254,6 +313,10 @@ export function buildDailyRuleInsight(p) {
     : coach.run_day
     ? '恢复比较平稳，可以跑步；控制在轻松配速，不用追速度。'
     : '整体状态平稳，按原计划活动；晚上留一点时间让自己放松下来。';
+  const tagLabels = coach.tags.join('、');
+  const summary = tagLabels
+    ? `结合${tagLabels.length > 40 ? '当日全部标签' : tagLabels}记录与睡眠、恢复、压力和活动指标，${summaryBody}`
+    : summaryBody;
   const priority = coach.flags.rest_day
     ? '今天不跑步；分两次做 5 分钟拉伸即可。'
     : coach.flags.period
@@ -273,7 +336,7 @@ export function buildDailyRuleInsight(p) {
       activity: activitySentence(p),
       pressure: pressureSentence(p, coach),
     },
-    trend_summary: `近7天睡眠均分 ${score(p.avg?.sleep) ?? '—'}，准备度 ${score(p.avg?.readiness) ?? '—'}，以个人趋势为准。`,
+    trend_summary: trendSentence(p),
     advice: {
       priority,
       watch: '睡前减少手机使用，给自己留出短暂放松时间。',

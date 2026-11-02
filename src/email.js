@@ -62,12 +62,6 @@ function noteLine(text, color = D.sub) {
   return `<div style="padding-top:9px;font-size:12px;line-height:18px;color:${color};"><b style="color:${D.title};">综合解读：</b>${esc(text)}</div>`;
 }
 
-function pressureFactors(p) {
-  const factors = p.coach?.pressure_factors || p.pressure_factors || [];
-  if (!factors.length) return '';
-  return `<div style="font-size:11px;line-height:18px;color:${D.sub};padding-top:7px;">主要伴随因素：${esc(factors.join('、'))}</div>`;
-}
-
 // 主卡底部的附属小卡：明显小一号，数值 + 基线 + 涨跌 + 内嵌一句点评，不再另开解读区块
 function miniCard({ label, color, score, baseText, tag, note }) {
   const status = grade(score);
@@ -175,38 +169,44 @@ function sleepBar(d, cmp = {}) {
     </tr></table>`;
 }
 
-// 7 天三指标热力矩阵：不依赖折线或复杂 CSS，所有邮件客户端均可稳定呈现。
-function heatStyle(color, value) {
-  if (typeof value !== 'number') return { bg: '#ECEEF2', fg: '#9CA3AF' };
-  if (value >= 85) return { bg: color, fg: '#FFFFFF' };
-  if (value >= 70) {
-    if (color === D.sleep) return { bg: '#C4B5FD', fg: '#4C3F8F' };
-    if (color === D.ready) return { bg: '#A7D9BC', fg: '#276842' };
-    return { bg: '#9DCEF0', fg: '#245C8D' };
-  }
-  if (color === D.sleep) return { bg: '#ECE8FC', fg: '#655A8E' };
-  if (color === D.ready) return { bg: '#E3F3EA', fg: '#4C7960' };
-  return { bg: '#E4F0F9', fg: '#4B769A' };
+// 邮件不支持可靠的绝对定位，用 10 层 table 网格画出纵向得分和横向个人基线。
+function scoreBand(value) {
+  if (typeof value !== 'number' || value < 0 || value > 100) return null;
+  return Math.min(9, Math.floor((100 - Math.round(value)) / 10));
 }
 
-function heatCell(value, color, isToday) {
-  const tone = heatStyle(color, value);
-  const border = isToday ? `border:2px solid ${color};` : '';
-  return `<td align="center" style="padding:2px;">
-    <div style="background:${tone.bg};${border}border-radius:6px;font-size:10px;font-weight:700;color:${tone.fg};line-height:25px;height:25px;">${
-      typeof value === 'number' ? Math.round(value) : '—'
-    }</div>
-  </td>`;
+function trendBaseline(p, key) {
+  const base = p.baseline?.[key];
+  if (!base || typeof base.avg !== 'number') return { band: null, text: '基线暂无数据' };
+  if (base.n < 5) return { band: null, text: `基线样本不足（${base.n}天）` };
+  return { band: scoreBand(base.avg), text: `个人基线 ${Math.round(base.avg)}` };
 }
 
-function heatRow(label, trend, key, color, avg) {
-  const cells = trend.map((item, index) => heatCell(item[key], color, index === trend.length - 1)).join('');
+function trendStrip(label, trend, key, color, base) {
+  const markerBands = trend.map((item) => scoreBand(item[key]));
+  const rows = Array.from({ length: 10 }, (_, band) => {
+    const cells = markerBands
+      .map((markerBand, index) => {
+        const isToday = index === markerBands.length - 1;
+        const line = base.band === band ? 'border-top:1px dashed #9CA3AF;' : '';
+        const dot = markerBand === band
+          ? `<span style="display:block;width:7px;height:7px;margin:-1px auto 0;background:${color};border:${isToday ? '1px solid #44444B' : '0'};border-radius:7px;font-size:0;line-height:0;">&nbsp;</span>`
+          : '&nbsp;';
+        return `<td style="padding:0;${line}"><div style="height:4px;font-size:0;line-height:0;">${dot}</div></td>`;
+      })
+      .join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
+  const values = trend
+    .map((item, index) => `<td align="center" style="padding:4px 0 0;font-size:10px;line-height:13px;font-weight:${
+      index === trend.length - 1 ? '700' : '400'
+    };color:${index === trend.length - 1 ? D.title : D.sub};">${typeof item[key] === 'number' ? Math.round(item[key]) : '—'}</td>`)
+    .join('');
   return `<tr>
-    <td width="54" style="width:54px;font-size:11px;font-weight:700;color:${D.title};line-height:16px;padding:4px 3px 4px 0;">${label}</td>
-    ${cells}
-    <td width="48" align="right" style="width:48px;font-size:10px;color:${D.sub};line-height:16px;padding:4px 0 4px 3px;">均 ${
-      typeof avg === 'number' ? Math.round(avg) : '—'
-    }</td>
+    <td width="78" valign="top" style="width:78px;padding:7px 6px 0 0;font-size:11px;font-weight:700;color:${D.title};line-height:15px;">${label}<div style="font-size:9px;font-weight:400;color:${D.sub};line-height:13px;padding-top:2px;">${base.text}</div></td>
+    <td colspan="7" style="padding:7px 0 4px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;">${rows}</table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${values}</tr></table>
+    </td>
   </tr>`;
 }
 
@@ -219,12 +219,11 @@ function heatmap(p) {
     )
     .join('');
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;">
-    <tr><td width="54" style="width:54px;"></td>${head}<td width="48" style="width:48px;"></td></tr>
-    ${heatRow('睡眠', days, 'sleep', D.sleep, p.avg.sleep)}
-    ${heatRow('准备度', days, 'readiness', D.ready, p.avg.readiness)}
-    ${heatRow('活动', p.trend_act || days, 'activity', D.active, p.avg.activity)}
-  </table>
-  <div style="font-size:10px;line-height:15px;color:${D.sub};padding-top:6px;">活动按完整自然日统计，日期较睡眠提前一天。</div>`;
+    <tr><td width="78" style="width:78px;"></td>${head}</tr>
+    ${trendStrip('睡眠', days, 'sleep', D.sleep, trendBaseline(p, 'sleep'))}
+    ${trendStrip('准备度', days, 'readiness', D.ready, trendBaseline(p, 'readiness'))}
+    ${trendStrip('活动', p.trend_act || days, 'activity', D.active, trendBaseline(p, 'activity'))}
+  </table>`;
 }
 
 function adviceList(p) {
@@ -313,7 +312,7 @@ export function renderEmail(p) {
     ),
     card(`${plainTitle('身体状态')}${metricGrid(bodyMetrics)}${noteLine(p.insight?.sections?.body)}`, '18px 18px 16px 18px', 'soft'),
     card(`${plainTitle('昨日活动')}${metricGrid(activityMetrics)}${noteLine(p.insight?.sections?.activity)}`, '18px 18px 16px 18px', 'soft'),
-    card(`${plainTitle('昨日压力')}${metricGrid(pressureMetrics)}${pressureFactors(p)}${noteLine(p.insight?.sections?.pressure)}`, '18px 18px 16px 18px', 'soft'),
+    card(`${plainTitle('昨日压力')}${metricGrid(pressureMetrics)}${noteLine(p.insight?.sections?.pressure)}`, '18px 18px 16px 18px', 'soft'),
     card(
       `${plainTitle('近 ' + p.days + ' 天趋势')}` +
         heatmap(p) +

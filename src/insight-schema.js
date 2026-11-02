@@ -1,6 +1,6 @@
 // 洞察输出的边界：模型只能补充解释和建议，不能改写已计算的健康事实。
 
-export const INSIGHT_PROMPT_VERSION = 'v13';
+export const INSIGHT_PROMPT_VERSION = 'v15';
 export const INSIGHT_CAUTION = '健康趋势参考，不构成医疗建议。';
 
 const MAX = { summary: 240, title: 60, reason: 180, action: 240, caution: 100, section: 72 };

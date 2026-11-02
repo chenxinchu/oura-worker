@@ -126,6 +126,35 @@ function longSleepByDay(sleeps) {
   return out;
 }
 
+function tagsInRange(tags, start, end) {
+  const out = [];
+  for (const tag of tags || []) {
+    if (!tag || typeof tag !== 'object') continue;
+    const tagStart = tag.start_day || tag.day || (tag.start_time || '').slice(0, 10);
+    const tagEnd = tag.end_day || (tag.end_time || '').slice(0, 10) || tagStart;
+    if (!tagStart || tagStart > end || tagEnd < start) continue;
+    const label = tag.tag_type_name || tag.tag_type_code || tag.comment || tag.name || tag.id;
+    if (label) out.push(String(label));
+  }
+  return [...new Set(out)];
+}
+
+function tagsByDay(tags, start, end) {
+  const out = {};
+  for (const tag of tags || []) {
+    if (!tag || typeof tag !== 'object') continue;
+    const tagStart = tag.start_day || tag.day || (tag.start_time || '').slice(0, 10);
+    const tagEnd = tag.end_day || (tag.end_time || '').slice(0, 10) || tagStart;
+    const label = tag.tag_type_name || tag.tag_type_code || tag.comment || tag.name || tag.id;
+    if (!tagStart || !label || tagStart > end || tagEnd < start) continue;
+    for (let day = tagStart < start ? start : tagStart; day <= (tagEnd > end ? end : tagEnd); day = addDays(day, 1)) {
+      if (!out[day]) out[day] = [];
+      out[day].push(String(label));
+    }
+  }
+  return Object.fromEntries(Object.entries(out).map(([day, labels]) => [day, [...new Set(labels)]]));
+}
+
 const BUCKETS = [
   'sleep',
   'readiness',
@@ -136,9 +165,12 @@ const BUCKETS = [
   'efficiency',
   'latency',
   'hrv',
+  'avg_hr',
   'low_hr',
   'steps',
   'active_cal',
+  'total_cal',
+  'resting',
   'sedentary',
   'temp_dev',
   'spo2',
@@ -177,8 +209,18 @@ export function aggregate(raw, start, end) {
       activity: numOrNull(a.score),
       steps: numOrNull(a.steps),
       hrv: numOrNull(t.average_hrv),
+      avg_hr: numOrNull(t.average_heart_rate),
       total_sleep: numOrNull(t.total_sleep_duration),
+      deep: numOrNull(t.deep_sleep_duration),
+      rem: numOrNull(t.rem_sleep_duration),
       efficiency: numOrNull(t.efficiency),
+      low_hr: numOrNull(t.lowest_heart_rate),
+      active_cal: numOrNull(a.active_calories),
+      total_cal: numOrNull(a.total_calories),
+      resting: numOrNull(a.resting_time),
+      sedentary: numOrNull(a.sedentary_time),
+      stress_high: numOrNull(x.stress_high),
+      recovery_high: numOrNull(x.recovery_high),
       temp_dev: numOrNull(r.temperature_deviation),
     };
     per_day.push(row);
@@ -192,9 +234,12 @@ export function aggregate(raw, start, end) {
     b.efficiency.push(row.efficiency);
     b.latency.push(numOrNull(t.latency));
     b.hrv.push(row.hrv);
+    b.avg_hr.push(row.avg_hr);
     b.low_hr.push(numOrNull(t.lowest_heart_rate));
     b.steps.push(row.steps);
     b.active_cal.push(numOrNull(a.active_calories));
+    b.total_cal.push(row.total_cal);
+    b.resting.push(row.resting);
     b.sedentary.push(numOrNull(a.sedentary_time));
     b.temp_dev.push(row.temp_dev);
     b.spo2.push(numOrNull(oxy.average));
@@ -204,6 +249,9 @@ export function aggregate(raw, start, end) {
 
   const averages = {};
   for (const k of BUCKETS) averages[k] = avg(b[k]);
+  // 仅在有睡眠记录的夜晚累计低于 7 小时的部分，缺失记录不按负债处理。
+  const sleep_debt = b.total_sleep.reduce((sum, value) => sum + (typeof value === 'number' ? Math.max(0, 7 * 3600 - value) : 0), 0);
+  averages.sleep_debt = sleep_debt;
 
   return {
     start,
@@ -216,7 +264,7 @@ export function aggregate(raw, start, end) {
       detail: count(b.total_sleep),
     },
     avg: averages,
-    total: { steps: total(b.steps), active_cal: total(b.active_cal) },
+    total: { steps: total(b.steps), active_cal: total(b.active_cal), sleep_debt },
     per_day,
   };
 }
@@ -248,6 +296,8 @@ export function fmtVal(t, v, unit = '') {
       return String(Math.round(v));
     case 'dur':
       return dur(v);
+    case 'dur0':
+      return v > 0 ? dur(v) : '0m';
     case 'pct':
       return `${Math.round(v)}%`;
     case 'int':
@@ -263,7 +313,7 @@ export function fmtVal(t, v, unit = '') {
 
 export function fmtDelta(t, d) {
   if (typeof d !== 'number' || !isFinite(d)) return '—';
-  if (t === 'dur') {
+  if (t === 'dur' || t === 'dur0') {
     const m = Math.round(d / 60);
     if (m === 0) return '持平';
     const sign = m > 0 ? '+' : '−';
@@ -286,8 +336,19 @@ export function fmtDelta(t, d) {
   return `${r > 0 ? '+' : '−'}${Math.abs(r).toFixed(1)}`;
 }
 
-export function compareRows(cur, prev) {
-  return METRICS.map((m) => {
+const SLEEP_DEBT_METRIC = { k: 'sleep_debt', label: '周睡眠负债', t: 'dur0', pref: 'down' };
+const STRESS_METRICS = [
+  { k: 'stress_high', label: '日均高压力', t: 'dur0', pref: 'down' },
+  { k: 'recovery_high', label: '日均恢复时间', t: 'dur0', pref: 'up' },
+];
+const WEEKLY_DETAIL_METRICS = [
+  { k: 'total_cal', label: '日均总消耗', t: 'int', unit: 'kcal', pref: 'none' },
+  { k: 'avg_hr', label: '平均夜间心率', t: 'int', unit: 'bpm', pref: 'down' },
+  { k: 'resting', label: '日均休息时长', t: 'dur', pref: 'up' },
+];
+
+export function compareRows(cur, prev, extraMetrics = []) {
+  return [...METRICS, ...extraMetrics].map((m) => {
     const c = cur.avg[m.k];
     const p = prev ? prev.avg[m.k] : null;
     const delta = typeof c === 'number' && typeof p === 'number' ? c - p : null;
@@ -298,6 +359,164 @@ export function compareRows(cur, prev) {
     }
     return { ...m, cur: c, prev: p, delta, good };
   });
+}
+
+const SIGNAL_TITLE = {
+  sleep: { best: '睡眠较稳', risk: '睡眠是短板' },
+  readiness: { best: '恢复稳健', risk: '恢复需留意' },
+  activity: { best: '活动完成好', risk: '活动可调整' },
+};
+
+const SIGNAL_SHORT_LABEL = {
+  total_sleep: '睡眠',
+  sleep_debt: '负债',
+  efficiency: '效率',
+  latency: '入睡',
+  hrv: 'HRV',
+  low_hr: '心率',
+  steps: '步数',
+  active_cal: '消耗',
+  sedentary: '久坐',
+  temp_dev: '体温',
+  spo2: '血氧',
+  stress_high: '压力',
+  recovery_high: '恢复',
+};
+
+const CHANGE_SCALE = {
+  sleep: 5,
+  readiness: 5,
+  activity: 5,
+  total_sleep: 30 * 60,
+  sleep_debt: 30 * 60,
+  efficiency: 3,
+  latency: 10 * 60,
+  hrv: 5,
+  low_hr: 3,
+  steps: 2000,
+  active_cal: 100,
+  sedentary: 60 * 60,
+  temp_dev: 0.2,
+  spo2: 0.5,
+};
+
+function weeklySignals(cur, prev, kind) {
+  const period = kind === 'monthly' ? '本月' : '本周';
+  const previous = kind === 'monthly' ? '上月' : '上周';
+  const rows = compareRows(cur, prev);
+  const core = rows.filter((r) => ['sleep', 'readiness', 'activity'].includes(r.k) && typeof r.cur === 'number');
+  if (core.length < 2) {
+    return [
+      { tone: 'change', title: '变化待观察', reason: `${period}核心评分记录不足，先保持规律佩戴和同步，下一周期才能看出更清楚的变化。` },
+    ];
+  }
+
+  const best = core.reduce((a, b) => (b.cur > a.cur ? b : a));
+  const risk = core.filter((r) => r.k !== best.k).reduce((a, b) => (b.cur < a.cur ? b : a));
+  const reason = (r, ending) => {
+    const compare = prev && typeof r.delta === 'number' ? `，较${previous} ${fmtDelta(r.t, r.delta)}` : '';
+    return `${period}${r.label}为 ${fmtVal(r.t, r.cur, r.unit)}${compare}，${ending}`;
+  };
+  const signals = [
+    {
+      tone: 'positive',
+      metric: best.k,
+      title: SIGNAL_TITLE[best.k].best,
+      reason: reason(best, '是三项核心评分中表现最好的一项。'),
+    },
+    {
+      tone: 'risk',
+      metric: risk.k,
+      title: SIGNAL_TITLE[risk.k].risk,
+      reason: reason(risk, '是三项核心评分中相对较弱的一项，值得优先安排改善。'),
+    },
+  ];
+
+  const changed = rows
+    .filter((r) => r.k !== best.k && r.k !== risk.k && typeof r.delta === 'number' && CHANGE_SCALE[r.k])
+    .map((r) => ({ ...r, magnitude: Math.abs(r.delta) / CHANGE_SCALE[r.k] }))
+    .sort((a, b) => b.magnitude - a.magnitude)[0];
+
+  if (changed) {
+    const label = SIGNAL_SHORT_LABEL[changed.k] || changed.label;
+    const title = changed.good === true ? `${label}有改善` : changed.good === false ? `${label}需留意` : `${label}有变化`;
+    signals.push({
+      tone: changed.good === true ? 'positive' : changed.good === false ? 'risk' : 'change',
+      metric: changed.k,
+      title,
+      reason: reason(changed, `是${period}与${previous}之间变化幅度最大的重要指标。`),
+    });
+  } else {
+    signals.push({
+      tone: 'change',
+      title: '变化待观察',
+      reason: `${previous}可比数据不足，${period}先把规律作息和日常活动保持住，下一周期再看变化方向。`,
+    });
+  }
+  return signals;
+}
+
+function weeklyStory(raw, cur, range, kind) {
+  const period = kind === 'monthly' ? '本月' : '本周';
+  const days = cur.per_day.filter((day) => typeof day.sleep === 'number' || typeof day.readiness === 'number' || typeof day.steps === 'number');
+  const tags = tagsByDay(raw.tag, range.start, range.end);
+  if (!days.length) return [];
+  const pick = (key, compare) => days.filter((day) => typeof day[key] === 'number').reduce((best, day) => (!best || compare(day[key], best[key]) ? day : best), null);
+  const candidates = [
+    { day: pick('steps', (a, b) => a > b), title: '活动达到高点', reason: '这一天的日常活动最充足，之后要留意恢复能不能跟上。' },
+    { day: pick('readiness', (a, b) => a < b), title: '身体需要缓一缓', reason: `恢复状态来到${period}较弱的位置，适合把节奏收一收。` },
+    { day: pick('sleep', (a, b) => a > b), title: '睡眠带来修复', reason: '这一晚的睡眠表现更完整，为后面的恢复留出了空间。' },
+    { day: pick('hrv', (a, b) => a > b), title: '恢复信号转好', reason: `恢复信号来到${period}较好的位置，身体开始找回节奏。` },
+    ...(kind === 'monthly'
+      ? [
+          { day: pick('sleep', (a, b) => a < b), title: '睡眠出现低点', reason: `这一晚的睡眠表现落到${period}低位，后续恢复需要多留意。` },
+          { day: pick('hrv', (a, b) => a < b), title: '恢复信号走弱', reason: `HRV 来到${period}低位，适合减少不必要的高负荷。` },
+        ]
+      : []),
+  ].filter((item) => item.day);
+  const selected = new Map();
+  for (const item of candidates) {
+    if (selected.has(item.day.day)) continue;
+    const labels = tags[item.day.day] || [];
+    selected.set(item.day.day, {
+      day: item.day.day,
+      title: item.title,
+      reason: `${item.reason}${labels.length ? ` 当天有${labels.slice(0, 2).join('、')}记录，作为背景一起看。` : ''}`,
+    });
+  }
+  if (kind === 'monthly') {
+    const avg = cur.avg;
+    const anomalies = [...days]
+      .map((day) => ({
+        day,
+        score: (typeof day.sleep === 'number' ? Math.abs(day.sleep - (avg.sleep || day.sleep)) : 0) +
+          (typeof day.readiness === 'number' ? Math.abs(day.readiness - (avg.readiness || day.readiness)) : 0) +
+          (typeof day.hrv === 'number' && typeof avg.hrv === 'number' ? Math.abs(day.hrv - avg.hrv) / 2 : 0),
+      }))
+      .sort((a, b) => b.score - a.score);
+    for (const { day } of anomalies) {
+      if (selected.size >= 6) break;
+      if (selected.has(day.day)) continue;
+      const labels = tags[day.day] || [];
+      selected.set(day.day, {
+        day: day.day,
+        title: '状态出现波动',
+        reason: `${period}这一天多项状态偏离平时表现，适合结合当天安排回看原因。${labels.length ? ` 当天有${labels.slice(0, 2).join('、')}记录，作为背景一起看。` : ''}`,
+      });
+    }
+  } else {
+    for (const day of days) {
+      if (selected.size >= 5) break;
+      if (selected.has(day.day)) continue;
+      const labels = tags[day.day] || [];
+      selected.set(day.day, {
+        day: day.day,
+        title: labels.length ? '记录了新的身体背景' : '保持日常节奏',
+        reason: labels.length ? `当天有${labels.slice(0, 2).join('、')}记录，结合睡眠、恢复和活动一起观察。` : '这一周的节奏没有出现额外波动，继续按身体感受安排当天活动。',
+      });
+    }
+  }
+  return [...selected.values()].sort((a, b) => (a.day < b.day ? -1 : 1));
 }
 
 // 亮点与异常：从逐日数据里挑真正值得看一眼的点，不堆砌
@@ -473,7 +692,20 @@ export function buildPeriodPayload(raw, kind, today) {
   const range = periodFor(kind, today);
   const cur = aggregate(raw, range.start, range.end);
   const prev = aggregate(raw, range.prevStart, range.prevEnd);
+  const baselineStart = kind === 'weekly' ? addDays(range.start, -21) : null;
+  const baseline = baselineStart ? aggregate(raw, baselineStart, addDays(range.start, -1)) : null;
   const label = rangeLabel(range);
+  const detailMetrics = kind === 'monthly'
+    ? [{ ...SLEEP_DEBT_METRIC, label: '月睡眠负债' }, ...STRESS_METRICS, ...WEEKLY_DETAIL_METRICS]
+    : kind === 'weekly'
+    ? [SLEEP_DEBT_METRIC, ...STRESS_METRICS, ...WEEKLY_DETAIL_METRICS]
+    : [];
+  const rows = compareRows(cur, prev, detailMetrics);
+  if (kind === 'weekly' || kind === 'monthly') {
+    const debtIndex = rows.findIndex((row) => row.k === 'sleep_debt');
+    const sleepIndex = rows.findIndex((row) => row.k === 'total_sleep');
+    if (debtIndex >= 0 && sleepIndex >= 0) rows.splice(sleepIndex + 1, 0, rows.splice(debtIndex, 1)[0]);
+  }
 
   return {
     kind,
@@ -481,13 +713,17 @@ export function buildPeriodPayload(raw, kind, today) {
     label,
     cur,
     prev,
-    rows: compareRows(cur, prev),
+    baseline: baseline && baseline.n.sleep >= 7 ? baseline : null,
+    rows,
     // 上期有效天数太少时不做环比，避免拿 1 天数据当「上周」
     has_prev: prev.n.sleep >= 3,
     // 本期数据覆盖率偏低时要在邮件里明说
     coverage: cur.day_count ? cur.n.sleep / cur.day_count : 0,
     highlights: highlights(cur, prev, kind),
+    signals: kind === 'weekly' || kind === 'monthly' ? weeklySignals(cur, prev.n.sleep >= 3 ? prev : null, kind) : [],
+    story: kind === 'weekly' || kind === 'monthly' ? weeklyStory(raw, cur, range, kind) : [],
     advice: periodAdvice(cur, prev, kind),
+    user_tags: tagsInRange(raw.tag, range.start, range.end),
     prev_title: label.prevTitle,
   };
 }

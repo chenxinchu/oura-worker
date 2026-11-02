@@ -63,7 +63,7 @@ export function metricCell(item, side = 'left') {
   return `<td width="50%" style="padding:${padding};vertical-align:top;">
     <div style="background:${tone || '#F7F7F9'};border-radius:10px;padding:9px 10px 8px 10px;">
       <div style="font-size:11px;color:${MUTED};line-height:16px;">${label}</div>
-      <div style="font-size:16px;font-weight:700;color:${INK};line-height:22px;">${value}${u}${tail}</div>${note || ''}
+      <div style="font-size:16px;font-weight:700;color:${INK};line-height:22px;">${value}${u}${tail}</div>${note || '<div style="font-size:10px;line-height:15px;padding-top:3px;">&nbsp;</div>'}
     </div>
   </td>`;
 }
