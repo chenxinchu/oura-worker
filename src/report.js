@@ -97,6 +97,15 @@ function avgWithCount(values) {
   };
 }
 
+// 保留原始时区中的钟表时间，避免 Date 转 UTC 后把本地就寝时间偏移。
+function bedtimeMinute(detail) {
+  const match = String(detail?.bedtime_start || '').match(/T(\d{2}):(\d{2})/);
+  if (!match) return null;
+  const minute = Number(match[1]) * 60 + Number(match[2]);
+  // 凌晨入睡与前一晚的就寝时间放在同一条时间轴，方便计算均值和差值。
+  return minute < 12 * 60 ? minute + 24 * 60 : minute;
+}
+
 // Oura Tag 在不同版本/类型中可能使用 day、start_day 或 start_time；统一映射到报告日。
 function tagsOn(tags, day) {
   const out = [];
@@ -246,7 +255,7 @@ export function buildPayload(raw, days, reportDay) {
     // 活动与压力
     steps: { cur: act.steps, prev: aPrev.steps, t: 'int', pref: 'up' },
     active_cal: { cur: act.active_calories, prev: aPrev.active_calories, t: 'int', pref: 'up' },
-    total_cal: { cur: act.total_calories, prev: aPrev.total_calories, t: 'int', pref: 'up' },
+    total_cal: { cur: act.total_calories, prev: aPrev.total_calories, t: 'int', pref: 'none' },
     sedentary: { cur: act.sedentary_time, prev: aPrev.sedentary_time, t: 'dur', pref: 'down' },
     stress_high: { cur: stress.stress_high, prev: stPrev.stress_high, t: 'dur', pref: 'down' },
     recovery_high: { cur: stress.recovery_high, prev: stPrev.recovery_high, t: 'dur', pref: 'up' },
@@ -257,7 +266,7 @@ export function buildPayload(raw, days, reportDay) {
   const baselineDays = Array.from({ length: 7 }, (_, i) => addDays(day, -i));
   const base = {
     sleep: [], readiness: [], activity: [], total_sleep: [], time_in_bed: [], efficiency: [], latency: [], deep: [], rem: [], light: [], awake: [],
-    hrv: [], avg_hr: [], min_hr: [], resp: [], resting_hr: [], hrv_balance: [], temp: [], recovery: [], spo2: [], apnea: [], vascular_age: [], vo2max: [],
+    bedtime: [], hrv: [], avg_hr: [], min_hr: [], resp: [], resting_hr: [], hrv_balance: [], temp: [], recovery: [], spo2: [], apnea: [], vascular_age: [], vo2max: [],
     steps: [], active_cal: [], total_cal: [], sedentary: [], stress_high: [], recovery_high: [],
   };
   for (const d of baselineDays) {
@@ -281,6 +290,7 @@ export function buildPayload(raw, days, reportDay) {
     base.rem.push(dd.rem_sleep_duration);
     base.light.push(dd.light_sleep_duration);
     base.awake.push(dd.awake_time);
+    base.bedtime.push(bedtimeMinute(dd));
     base.hrv.push(dd.average_hrv);
     base.avg_hr.push(dd.average_heart_rate);
     base.min_hr.push(dd.lowest_heart_rate);
@@ -368,6 +378,7 @@ export function buildPayload(raw, days, reportDay) {
     readiness_score: ready.score ?? null,
     activity_score: act.score ?? null,
     detail,
+    bedtime_minute: bedtimeMinute(detail),
     temp_dev: ready.temperature_deviation ?? null,
     ready_contrib: ready.contributors || {},
     steps: act.steps ?? null,

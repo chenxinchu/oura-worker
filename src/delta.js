@@ -32,16 +32,17 @@ export function change(t, cur, prev, fmt) {
   return { text: `${sign}${Math.abs(Math.round(d)).toLocaleString('en-US')}`, dir: d > 0 ? 1 : -1 };
 }
 
-// 邮件箭头只表达数值方向：上升绿、下降红、持平灰。
-function tone(r) {
-  if (!r || r.dir === 0) return GRAY;
-  return r.dir > 0 ? GREEN : RED;
+// 箭头忠实表示数值方向，颜色才表达该方向对该指标是好是坏。
+export function deltaTone(r, pref) {
+  if (!r || r.dir === 0 || pref === 'none') return GRAY;
+  const improves = pref === 'down' ? r.dir < 0 : r.dir > 0;
+  return improves ? GREEN : RED;
 }
 
 const arrowOf = (r) => (r.dir > 0 ? '↑' : r.dir < 0 ? '↓' : '');
 
-function piece(r) {
-  const color = tone(r);
+function piece(r, pref) {
+  const color = deltaTone(r, pref);
   const a = arrowOf(r);
   const body = a ? `${a}${r.text.replace(/^[+−]/, '')}` : r.text;
   return `<span style="color:${color};font-weight:700;">${body}</span>`;
@@ -53,7 +54,7 @@ export function deltaInline(c) {
   if (!c) return '';
   const r = change(c.t, c.cur, c.prev, c.fmt);
   if (!r) return '';
-  return `<span style="font-size:10px;line-height:14px;white-space:nowrap;">${piece(r)}</span>`;
+  return `<span style="font-size:10px;line-height:14px;white-space:nowrap;">${piece(r, c.pref)}</span>`;
 }
 
 // 需要单独占一行时用（图例下方）

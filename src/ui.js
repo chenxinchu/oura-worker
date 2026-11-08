@@ -12,6 +12,11 @@ export const GREEN = '#16a34a';
 export const RED = '#dc2626';
 export const GRAY = '#9ca3af';
 export const ACCENT = '#7c5cff';
+export const METRIC = {
+  sleep: '#A78BFA',
+  readiness: '#34D399',
+  activity: '#60A5FA',
+};
 
 // 日报视觉规范：浅灰底 + 纯白卡 + 大圆角 + 柔和阴影，颜色只点缀数字与标记
 export const D = {
@@ -21,9 +26,9 @@ export const D = {
   title: '#44444B',
   sub: '#888890',
   hair: '#E4E5EA',
-  sleep: '#A78BFA',
-  ready: '#34D399',
-  active: '#60A5FA',
+  sleep: METRIC.sleep,
+  ready: METRIC.readiness,
+  active: METRIC.activity,
   warn: '#FB923C',
 };
 
@@ -104,6 +109,15 @@ export function noticeBar(text, tone = 'warn') {
       <tr><td style="padding:10px 12px;font-size:12px;line-height:19px;color:${c.fg};">${text}</td></tr>
     </table>
   </td></tr>`;
+}
+
+// 报告底部的来源与口径说明，三份报告共用以避免统计口径漂移。
+export function provenanceChips(items) {
+  const cells = items
+    .filter((item) => item?.label && item?.text)
+    .map((item, index, all) => `<td width="${(100 / all.length).toFixed(2)}%" valign="top" style="padding:${index ? '0 0 0 4px' : '0 4px 0 0'};"><div style="background:#F7F7F9;border-radius:10px;padding:8px 9px;"><div style="font-size:9px;font-weight:700;line-height:13px;color:${MUTED};">${item.label}</div><div style="font-size:10px;line-height:15px;color:#4B5563;padding-top:2px;">${item.text}</div></div></td>`)
+    .join('');
+  return cells ? `<tr><td style="padding:0 0 12px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${cells}</tr></table></td></tr>` : '';
 }
 
 // 信件体骨架：日报 / 周报 / 月报共用，只有 intro 那句话按周期换

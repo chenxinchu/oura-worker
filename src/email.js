@@ -2,20 +2,19 @@
 // 通用 UI 件在 ui.js，这里只放日报特有的版式
 
 import { dur, num, signed, grade, advice } from './report.js';
-import { change, deltaTag, deltaInline, deltaText } from './delta.js';
+import { change, deltaTag, deltaInline, deltaText, deltaTone } from './delta.js';
 import {
   D,
-  GREEN,
+  METRIC,
   INK,
   MUTED,
-  RED,
-  GRAY,
   card,
   plainTitle,
   sectionTitle,
   metricGrid,
   dur0,
   bulletList,
+  provenanceChips,
   shell,
   letterHead,
   metaRow,
@@ -44,13 +43,13 @@ function baselineMeta(p, key, format) {
   }</div>`;
 }
 
-// 主卡箭头与明细一致：上升绿、下降红、持平灰。
+// 主卡箭头与明细共用同一套方向偏好配色。
 function deltaWarn(c, compact = false) {
   if (!c) return '';
   const r = change(c.t, c.cur, c.prev, c.fmt);
   if (!r) return '';
   const body = r.dir === 0 ? '持平' : `${r.dir > 0 ? '↑' : '↓'}${r.text.replace(/^[+−]/, '')}`;
-  const color = r.dir > 0 ? GREEN : r.dir < 0 ? RED : GRAY;
+  const color = deltaTone(r, c.pref);
   return `<span style="font-size:11px;font-weight:700;color:${color};white-space:nowrap;margin-left:7px;vertical-align:${
     compact ? 'baseline' : '10px'
   }">${body}</span>`;
@@ -62,63 +61,56 @@ function noteLine(text, color = D.sub) {
   return `<div style="padding-top:9px;font-size:12px;line-height:18px;color:${color};"><b style="color:${D.title};">综合解读：</b>${esc(text)}</div>`;
 }
 
-// 主卡底部的附属小卡：明显小一号，数值 + 基线 + 涨跌 + 内嵌一句点评，不再另开解读区块
-function miniCard({ label, color, score, baseText, tag, note }) {
-  const status = grade(score);
-  const statusColor = status.color;
-  return `<td width="48%" valign="top" style="padding:12px 12px 11px 12px;background:#F7F7F9;border-radius:14px;">
+function scoreCard({ label, color, score, baseText, tag, featured = false }) {
+  const statusColor = color;
+  const skin = featured ? 'background:#ECFDF5;border:1px solid #A7F3D0;' : 'background:#F7F7F9;';
+  const badge = featured ? '<span style="display:inline-block;margin-left:5px;padding:1px 5px;background:#D1FAE5;border-radius:7px;font-size:9px;font-weight:700;line-height:13px;color:#059669;vertical-align:1px;">今日重点</span>' : '';
+  return `<td width="32%" valign="top" style="padding:0;">
+    <div style="${skin}border-radius:14px;padding:12px 12px 11px 12px;">
     <div style="font-size:11px;color:${D.sub};line-height:15px;">
       <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${statusColor};margin-right:5px;vertical-align:1px;"></span>${label}
+      ${badge}
     </div>
-    <div style="padding-top:4px;line-height:30px;white-space:nowrap;">
-      <span style="font-size:26px;font-weight:800;color:${statusColor};letter-spacing:-.5px;">${
+    <div style="padding-top:5px;line-height:38px;white-space:nowrap;">
+      <span style="font-size:34px;font-weight:800;color:${statusColor};letter-spacing:-.5px;">${
         typeof score === 'number' ? Math.round(score) : '—'
       }</span>
     </div>
     <div style="font-size:10px;color:${D.sub};line-height:14px;">${baseText}${
       tag ? `<span style="margin-left:5px;">${tag}</span>` : ''
     }</div>
-    ${note ? `<div style="font-size:11px;color:${D.sub};line-height:17px;padding-top:7px;">${esc(note)}</div>` : ''}
+    </div>
   </td>`;
 }
 
-// 准备度是唯一的视觉中心：大数字 + 基线 + 橙色变化 + 状态标签，睡眠与活动降为卡内附属
-function readinessHero(p) {
-  const cmp = p.base_cmp || {};
-  const g = grade(p.readiness_score);
+function readinessReason(p) {
   const reason = p.insight?.readiness_reason || '准备度和最近一周接近';
-
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr><td valign="middle" style="background:#F7F7F9;border-radius:16px;padding:16px 14px 14px 14px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;">
-    <tr><td align="center" style="font-size:11px;color:${D.sub};line-height:15px;"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${g.color};margin-right:5px;vertical-align:1px;"></span>准备度</td></tr>
-    <tr><td align="center" style="padding-top:2px;line-height:58px;white-space:nowrap;">
-      <span style="font-size:64px;font-weight:800;color:${g.color};letter-spacing:-2px;">${
-        typeof p.readiness_score === 'number' ? Math.round(p.readiness_score) : '—'
-      }</span>
-    </td></tr>
-    <tr><td align="center" style="font-size:12px;color:${D.sub};line-height:17px;">${baseline(p, 'readiness')}${deltaWarn(
-      cmp.readiness,
-      true
-    )}</td></tr>
-    <tr><td align="center" style="padding-top:10px;font-size:12px;line-height:18px;color:${D.title};">归因：${esc(reason)}</td></tr>
-    </table>
-  </td></tr></table>`;
+  return `<div style="margin-top:12px;border-left:3px solid ${METRIC.readiness};background:#ECFDF5;border-radius:0 10px 10px 0;padding:10px 11px;font-size:12px;line-height:18px;color:${D.title};text-align:left;"><b style="color:#059669;">准备度归因：</b>${esc(reason)}</div>`;
 }
 
-function scoreMiniPair(p) {
+function scoreTriplet(p) {
   const cmp = p.base_cmp || {};
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
-    ${miniCard({
+    ${scoreCard({
       label: '睡眠',
-      color: D.sleep,
+      color: METRIC.sleep,
       score: p.sleep_score,
       baseText: baseline(p, 'sleep'),
       tag: deltaInline(cmp.sleep),
     })}
-    <td width="4%"></td>
-    ${miniCard({
+    <td width="2%"></td>
+    ${scoreCard({
+      label: '准备度',
+      color: METRIC.readiness,
+      score: p.readiness_score,
+      baseText: baseline(p, 'readiness'),
+      tag: deltaWarn(cmp.readiness, true),
+      featured: true,
+    })}
+    <td width="2%"></td>
+    ${scoreCard({
       label: '活动',
-      color: D.active,
+      color: METRIC.activity,
       score: p.activity_score,
       baseText: baseline(p, 'activity'),
       tag: deltaInline(cmp.activity),
@@ -137,7 +129,7 @@ function sleepBar(d, cmp = {}) {
   if (tot > 0) {
     segs = [
       [deep, '#7C6BD6'],
-      [rem, D.sleep],
+      [rem, METRIC.sleep],
       [light, '#D5C8FB'],
       [awake, '#E4E5EA'],
     ].filter(([v]) => v > 0);
@@ -163,7 +155,7 @@ function sleepBar(d, cmp = {}) {
       style="background:#f1f2f5;border-radius:5px;overflow:hidden;table-layout:fixed;"><tr>${cells}</tr></table>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
       ${leg('#7C6BD6', `深睡 ${dur(deep)}`, deltaTag(cmp.deep, 'left'))}
-      ${leg(D.sleep, `REM ${dur(rem)}`, deltaTag(cmp.rem, 'left'))}
+      ${leg(METRIC.sleep, `REM ${dur(rem)}`, deltaTag(cmp.rem, 'left'))}
       ${leg('#D5C8FB', `浅睡 ${dur(light)}`)}
       ${leg('#E4E5EA', `清醒 ${dur(awake)}`)}
     </tr></table>`;
@@ -220,23 +212,21 @@ function heatmap(p) {
     .join('');
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;">
     <tr><td width="78" style="width:78px;"></td>${head}</tr>
-    ${trendStrip('睡眠', days, 'sleep', D.sleep, trendBaseline(p, 'sleep'))}
-    ${trendStrip('准备度', days, 'readiness', D.ready, trendBaseline(p, 'readiness'))}
-    ${trendStrip('活动', p.trend_act || days, 'activity', D.active, trendBaseline(p, 'activity'))}
+    ${trendStrip('睡眠', days, 'sleep', METRIC.sleep, trendBaseline(p, 'sleep'))}
+    ${trendStrip('准备度', days, 'readiness', METRIC.readiness, trendBaseline(p, 'readiness'))}
+    ${trendStrip('活动', p.trend_act || days, 'activity', METRIC.activity, trendBaseline(p, 'activity'))}
   </table>`;
 }
 
 function adviceList(p) {
-  if (!p.insight) return bulletList(advice(p), '#8b93a1', 'dot');
-  const row = (label, color, text) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
-    <td width="92" valign="top" style="width:92px;font-size:12px;font-weight:700;line-height:20px;color:${color};padding:0 8px 9px 0;">${label}</td>
-    <td valign="top" style="font-size:13px;line-height:20px;color:#374151;padding:0 0 9px 0;">${esc(text)}</td>
+  if (!p.insight?.advice_chains) return bulletList(advice(p), '#8b93a1', 'dot');
+  const item = (chain, index) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7F9;border-radius:14px;table-layout:fixed;"><tr>
+    <td style="padding:12px 14px 13px 14px;">
+      <div style="font-size:11px;font-weight:700;line-height:15px;color:${D.sub};">建议 ${index + 1}</div>
+      <div style="padding-top:5px;font-size:13px;line-height:21px;color:#374151;">${esc(chain.anomaly)}，${esc(chain.factor)}；建议${esc(chain.action)}。</div>
+    </td>
   </tr></table>`;
-  return `${row('✅ 优先做', '#16a34a', p.insight.advice.priority)}${row('⚠️ 需要留意', '#d97706', p.insight.advice.watch)}${row(
-    '❌ 尽量避开',
-    '#dc2626',
-    p.insight.advice.avoid
-  )}${row('🔎 后续观察', '#6b7280', p.insight.advice.observe)}<div style="font-size:11px;line-height:18px;color:${D.sub};padding:2px 0 0 0;">${esc(p.insight.caution)}</div>`;
+  return `${p.insight.advice_chains.map((chain, index) => `${item(chain, index)}<div style="height:8px;font-size:0;line-height:0;">&nbsp;</div>`).join('')}<div style="font-size:11px;line-height:18px;color:${D.sub};padding:0 0 2px 0;">${esc(p.insight.caution)}</div>`;
 }
 
 export function renderEmail(p) {
@@ -296,6 +286,11 @@ export function renderEmail(p) {
     `${Number(p.report_day.slice(5, 7))}/${Number(p.report_day.slice(8, 10))}/${p.report_day.slice(0, 4)}`
   );
   const riskColor = p.coach?.risk === 'red' ? '#dc2626' : p.coach?.risk === 'yellow' ? '#d97706' : '#16a34a';
+  const provenance = provenanceChips([
+    { label: '数据源', text: 'Oura Cloud API v2' },
+    { label: '统计区间', text: `睡眠 ${p.report_day.slice(5)} · 活动 ${p.act_day.slice(5)}` },
+    { label: '基线口径', text: '近 7 天个人基线' },
+  ]);
 
   const signoff = signoffRow();
 
@@ -304,7 +299,7 @@ export function renderEmail(p) {
     header,
     p.insight ? card(`<div style="border-left:3px solid ${riskColor};padding-left:10px;font-size:13px;line-height:22px;color:#374151;"><b style="color:${riskColor};">报告摘要：</b>${esc(p.insight.summary)}</div>`, '14px 16px', 'soft') : '',
     // 准备度主卡：唯一的大数字，睡眠与活动降为卡内附属
-    card(`${readinessHero(p)}<div style="height:16px;font-size:0;line-height:0;">&nbsp;</div>${scoreMiniPair(p)}`, '18px 18px 16px 18px', 'soft'),
+    card(`${scoreTriplet(p)}${readinessReason(p)}`, '18px 18px 16px 18px', 'soft'),
     card(
       `${plainTitle('昨夜睡眠')}${sleepBar(d, cmp)}<div style="height:12px;font-size:0;line-height:0;">&nbsp;</div>${metricGrid(sleepMetrics)}${noteLine(p.insight?.sections?.sleep)}`,
       '18px 18px 16px 18px',
@@ -321,10 +316,10 @@ export function renderEmail(p) {
       'soft'
     ),
     card(`${plainTitle('今日建议')}${adviceList(p)}`, '18px 18px 14px 18px', 'soft'),
+    provenance,
     signoff,
     `<tr><td align="center" style="padding:6px 0 0 0;font-size:11px;color:#a1a8b3;line-height:18px;">
-      数据来源 Oura Cloud API v2 · 由 Cloudflare Worker 自动生成<br>
-      报告日期 ${p.report_day}
+      由 Cloudflare Worker 自动生成
     </td></tr>`,
   ].join('');
 
@@ -385,17 +380,16 @@ export function renderText(p) {
     '',
     p.insight ? '今日建议' : '今日建议',
   ];
-  if (p.insight?.advice) {
+  if (p.insight?.advice_chains) {
     lines.push(p.insight.summary);
     const sec = p.insight.sections || {};
     if (sec.sleep) lines.push(`睡眠：${sec.sleep}`);
     if (sec.body) lines.push(`身体：${sec.body}`);
     if (sec.activity) lines.push(`活动：${sec.activity}`);
     if (sec.pressure) lines.push(`压力：${sec.pressure}`);
-    lines.push(`✅ 优先做：${p.insight.advice.priority}`);
-    lines.push(`⚠️ 需要留意：${p.insight.advice.watch}`);
-    lines.push(`❌ 尽量避开：${p.insight.advice.avoid}`);
-    lines.push(`后续观察：${p.insight.advice.observe}`);
+    for (const item of p.insight.advice_chains) {
+      lines.push(`· ${item.anomaly}，${item.factor}；建议${item.action}。`);
+    }
     lines.push(p.insight.caution);
   } else if (p.insight) {
     lines.push(p.insight.summary);

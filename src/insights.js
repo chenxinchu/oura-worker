@@ -67,6 +67,110 @@ function tagContext(tags) {
   });
 }
 
+function percentBelow(value, baseline) {
+  if (typeof value !== 'number' || typeof baseline?.avg !== 'number' || baseline.avg <= 0 || baseline.n < 5) return null;
+  return Math.round((1 - value / baseline.avg) * 100);
+}
+
+function percentAbove(value, baseline) {
+  if (typeof value !== 'number' || typeof baseline?.avg !== 'number' || baseline.avg <= 0 || baseline.n < 5) return null;
+  return Math.round((value / baseline.avg - 1) * 100);
+}
+
+function clock(minute) {
+  if (typeof minute !== 'number' || !isFinite(minute)) return null;
+  const normalized = ((Math.round(minute) % (24 * 60)) + 24 * 60) % (24 * 60);
+  return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+}
+
+// 建议候选由规则层先绑定事实，模型只能选择和润色，不能自行拼接因果。
+function dailyAdviceChains(p) {
+  const d = p.detail || {};
+  const base = p.baseline || {};
+  const hrvDrop = percentBelow(d.average_hrv, base.hrv);
+  const sleepDrop = percentBelow(d.total_sleep_duration, base.total_sleep);
+  const stressRise = percentAbove(p.stress_high, base.stress_high);
+  const readinessDrop = typeof p.readiness_score === 'number' && typeof base.readiness?.avg === 'number'
+    ? Math.round(base.readiness.avg - p.readiness_score)
+    : null;
+  const bedtimeDelay = typeof p.bedtime_minute === 'number' && typeof base.bedtime?.avg === 'number' && base.bedtime.n >= 5
+    ? Math.round(p.bedtime_minute - base.bedtime.avg)
+    : null;
+  const bedtimeTarget = base.bedtime?.n >= 5 ? clock(base.bedtime?.avg) : null;
+  const chains = [];
+
+  if (hrvDrop >= 10 && bedtimeDelay >= 30) {
+    chains.push({
+      anomaly: `HRV ${Math.round(d.average_hrv)}ms，较个人基线低 ${hrvDrop}%`,
+      factor: `可能与昨夜较平时晚 ${bedtimeDelay} 分钟入睡有关`,
+      action: `今晚 ${bedtimeTarget || '按平时就寝时间'} 前入睡，今天避免高强度训练`,
+    });
+  } else if (hrvDrop >= 10 && typeof d.awake_time === 'number' && (d.awake_time > 30 * 60 || d.awake_time > (base.awake?.avg || Infinity) * 1.25)) {
+    chains.push({
+      anomaly: `HRV ${Math.round(d.average_hrv)}ms，较个人基线低 ${hrvDrop}%`,
+      factor: `可能与昨夜清醒 ${durationText(d.awake_time)}、睡眠不够连贯有关`,
+      action: '今天改为轻松活动，今晚预留 20 分钟无屏幕放松',
+    });
+  }
+
+  if (sleepDrop >= 10 && bedtimeDelay >= 30) {
+    chains.push({
+      anomaly: `总睡眠 ${durationText(d.total_sleep_duration)}，较个人基线少 ${sleepDrop}%`,
+      factor: `可能与昨夜较平时晚 ${bedtimeDelay} 分钟入睡有关`,
+      action: `今晚 ${bedtimeTarget || '比平时提前 30 分钟'} 前上床，下午后避免咖啡因`,
+    });
+  } else if (sleepDrop >= 10 && typeof d.awake_time === 'number' && d.awake_time > 30 * 60) {
+    chains.push({
+      anomaly: `总睡眠 ${durationText(d.total_sleep_duration)}，较个人基线少 ${sleepDrop}%`,
+      factor: `可能与夜间清醒 ${durationText(d.awake_time)} 有关`,
+      action: '今晚睡前 1 小时减少屏幕和饮水，给自己留出更完整的睡眠窗口',
+    });
+  }
+
+  if (stressRise >= 25 && typeof p.recovery_high === 'number' && (p.recovery_high < 30 * 60 || p.recovery_high < (base.recovery_high?.avg || Infinity) * 0.7)) {
+    chains.push({
+      anomaly: `昨日高压力 ${durationText(p.stress_high)}，较个人基线高 ${stressRise}%`,
+      factor: `可能与恢复时长只有 ${durationText(p.recovery_high)}、没有充分放松有关`,
+      action: '今天安排两次 10 分钟离开屏幕的慢走或呼吸练习，晚上不加练',
+    });
+  }
+
+  if (readinessDrop >= 8 && base.readiness?.n >= 5 && typeof p.ready_contrib?.recovery_index === 'number' &&
+    typeof base.recovery?.avg === 'number' && base.recovery.n >= 5 && p.ready_contrib.recovery_index <= base.recovery.avg - 8) {
+    chains.push({
+      anomaly: `准备度 ${Math.round(p.readiness_score)} 分，较个人基线低 ${readinessDrop} 分`,
+      factor: `可能与恢复指数低于平时 ${Math.round(base.recovery.avg - p.ready_contrib.recovery_index)} 分有关`,
+      action: '取消间歇、冲刺和大重量训练，改为散步、拉伸或 Zone 2 活动',
+    });
+  }
+
+  const hasSleepAdvice = chains.some((item) => /HRV|总睡眠|准备度/.test(item.anomaly));
+  const hasActivityAdvice = chains.some((item) => /活动|步数|久坐/.test(item.anomaly));
+  const hasStressAdvice = chains.some((item) => /高压力|压力/.test(item.anomaly));
+  const stableChains = [
+    !hasSleepAdvice && {
+      anomaly: '睡眠与恢复数据当前没有明显偏离个人基线',
+      factor: '可能说明昨夜恢复窗口基本稳定',
+      action: '按既定训练和作息推进，今晚保持平时就寝时间',
+    },
+    !hasActivityAdvice && {
+      anomaly: '昨日活动量当前没有明显失衡',
+      factor: '可能说明活动节奏与恢复尚能配合',
+      action: '今天保持日间短时活动，避免连续久坐超过 1 小时',
+    },
+    !hasStressAdvice && {
+      anomaly: '压力与恢复时间当前没有明显警讯',
+      factor: '可能说明日间压力暂时维持在可控范围',
+      action: '晚上保留 20 分钟无屏幕放松，为明天恢复留出余量',
+    },
+  ].filter(Boolean);
+  for (const item of stableChains) {
+    if (chains.length >= 3) break;
+    chains.push(item);
+  }
+  return chains.slice(0, 3);
+}
+
 function buildCoachContext(p, env) {
   const profile = profileFromEnv(env);
   const tags = Array.isArray(p.user_tags) ? p.user_tags : [];
@@ -182,6 +286,7 @@ export function buildDailyInsightContext(p, env) {
       },
       health: { spo2: p.spo2, apnea_index: p.breathing_disturbance, cardio_age: p.vascular_age, vo2max: p.vo2max },
       baseline: aiBaseline(p.baseline),
+      advice_candidates: dailyAdviceChains(p),
       changes_vs_yesterday: { sleep_score: p.cmp?.sleep || null, readiness_score: p.cmp?.readiness || null, activity_score: p.cmp?.activity || null },
       trend: p.avg,
       // 所有标签均带使用边界传给模型，避免只把少数已识别标签用于判断。
@@ -317,15 +422,6 @@ export function buildDailyRuleInsight(p) {
   const summary = tagLabels
     ? `结合${tagLabels.length > 40 ? '当日全部标签' : tagLabels}记录与睡眠、恢复、压力和活动指标，${summaryBody}`
     : summaryBody;
-  const priority = coach.flags.rest_day
-    ? '今天不跑步；分两次做 5 分钟拉伸即可。'
-    : coach.flags.period
-    ? '今天用慢走和拉伸替代高强度训练。'
-    : coach.risk === 'red' || coach.risk === 'yellow'
-    ? '取消高强度训练，改为两次 5 分钟慢走或拉伸。'
-    : coach.run_day
-    ? '慢跑时控制配速和时长，全程避免冲刺。'
-    : '安排两次短时活动，避免久坐超过 1 小时。';
   return validateDailyInsight({
     source: 'rules',
     summary,
@@ -337,12 +433,7 @@ export function buildDailyRuleInsight(p) {
       pressure: pressureSentence(p, coach),
     },
     trend_summary: trendSentence(p),
-    advice: {
-      priority,
-      watch: '睡前减少手机使用，给自己留出短暂放松时间。',
-      avoid: coach.run_day ? '避免冲刺、长距离和高强度间歇。' : '避免高负荷活动。',
-      observe: '明早查看 HRV、高压力时长和恢复时长。',
-    },
+    advice_chains: dailyAdviceChains(p),
     caution: INSIGHT_CAUTION,
   });
 }
@@ -383,9 +474,11 @@ async function resolveInsight(env, context, fallback, validate) {
   }
 }
 
-export function resolveDailyInsight(env, p) {
+export async function resolveDailyInsight(env, p) {
   p.coach = buildCoachContext(p, env);
-  return resolveInsight(env, buildDailyInsightContext(p, env), buildDailyRuleInsight(p), validateDailyInsight);
+  const insight = await resolveInsight(env, buildDailyInsightContext(p, env), buildDailyRuleInsight(p), validateDailyInsight);
+  // 因果链必须保留规则层已验证的事实关系，不允许模型改写或拼接新的关联。
+  return { ...insight, advice_chains: dailyAdviceChains(p) };
 }
 
 export function resolvePeriodInsight(env, p) {

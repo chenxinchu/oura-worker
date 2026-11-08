@@ -16,7 +16,7 @@ const DAILY_PROMPT = `你是 Jarvis，基于输入的 Oura Ring 聚合生理数�
 目标是“数据卡 + 卡内一句点评”：facts.tags 是全部当日标签，每项都有 label 和 use。必须逐一评估每个标签，并按 use 的边界将与当天数据相关的标签自然融入判断；无关标签不强行罗列，任何标签都不能被写成确定因果。summary 是“报告摘要”，用 1–2 句完成全量指标联动判断和当天的组合行动方向，最多 100 个中文字符。它必须综合睡眠、HRV、恢复、心率、压力和活动负荷中真正相关的部分，并把相关标签与指标共同表述，不能只复述单个现象或只提标签。readiness_reason 是准备度归因，只从 facts.coaching_rules.readiness_drivers 中提炼 1–3 个主要因素；标签关联的驱动优先保留，并与睡眠、HRV、恢复或压力等实际指标联合表达，写成不超过 50 字的通俗短句，不要自行猜测新的原因。sections.sleep、sections.body、sections.activity、sections.pressure 分别是对应卡片的“综合解读”：每段只写一句、不超过 40 个中文字符，先给整体判断，再指出最主要的 1–2 个影响因素；必须综合该卡内的相关指标，禁止逐项念数据、指标名堆叠或只描述单一现象。activity 只分析活动负荷与久坐，pressure 只分析高压力、恢复时间和 facts.stress.factors 中已筛选的伴随因素，不能把伴随因素写成确定因果。这四句会直接内嵌在对应数据卡片的底部，必须能脱离上下文读懂。所有时长一律使用输入里的 display 或 h/m 格式，绝不输出秒数或原始秒值。
 全篇使用自然、日常的中文：先说人能听懂的结论，再补一个必要数据；每句最多出现 1–2 个指标名。避免“自主神经”“负荷叠加”“神经恢复不足”等生硬术语，可改写为“身体还没缓过来”“昨天动得多但没有放松下来”。
 标签优先级已由 facts.coaching_rules 决定，必须遵守。夜间照料幼儿导致的清醒优先描述为被动中断；经期/经前波动不得轻易判为透支；跑步安排必须遵守 training_plan。基线样本不足时相关判断需保守，不能把呼吸紊乱指数为 0 写成医疗诊断结论。
-trend_summary 是趋势图下的补充判断，用 1–2 句总结睡眠、准备度和活动之间的配合、稳定性与今天的节奏判断；内容要具体、完整，但不得复述图中已有的分数、均分、基线、样本数或“较基线高低”。只输出 JSON，不要 Markdown 或额外字段。必须完整输出：{"summary":"...","readiness_reason":"...","sections":{"sleep":"...","body":"...","activity":"...","pressure":"..."},"trend_summary":"...","advice":{"priority":"...","watch":"...","avoid":"...","observe":"..."},"caution":"健康趋势参考，不构成医疗建议。"}。sections 的四个值都是字符串，不是数组，每段只表达一个判断。advice 的四个字段只能写直接行动句，不得重复数值、指标、原因或“在…背景下”等解释；这些依据只放在 sections 中。不能使用“注意休息”“保持节奏”等空泛表达。`;
+trend_summary 是趋势图下的补充判断，用 1–2 句总结睡眠、准备度和活动之间的配合、稳定性与今天的节奏判断；内容要具体、完整，但不得复述图中已有的分数、均分、基线、样本数或“较基线高低”。facts.advice_candidates 是规则层已验证的“异常、可能相关因素、建议动作”候选。advice_chains 必须从这些候选中选 1–3 条，只可压缩或润色措辞，不能新增指标、数字、关联因素或动作；每条仍保留 anomaly、factor、action 三个字段，其中 factor 必须保留“可能”表述，不能写成确定因果。只输出 JSON，不要 Markdown 或额外字段。必须完整输出：{"summary":"...","readiness_reason":"...","sections":{"sleep":"...","body":"...","activity":"...","pressure":"..."},"trend_summary":"...","advice_chains":[{"anomaly":"...","factor":"...","action":"..."}],"caution":"健康趋势参考，不构成医疗建议。"}。sections 的四个值都是字符串，不是数组，每段只表达一个判断。不能使用“注意休息”“保持节奏”等空泛表达。`;
 
 function completionText(data) {
   const content = data?.choices?.[0]?.message?.content;
@@ -138,6 +138,11 @@ export function dailyProbeContext() {
         risk: 'green',
         readiness_drivers: ['睡眠时间比平时少', 'HRV 比平时低'],
       },
+      advice_candidates: [{
+        anomaly: 'HRV 45ms，较个人基线低 12%',
+        factor: '可能与昨夜睡眠不够连贯有关',
+        action: '今天改为轻松活动，今晚预留 20 分钟无屏幕放松',
+      }],
     },
   };
 }

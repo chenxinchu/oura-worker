@@ -1,9 +1,9 @@
 // 洞察输出的边界：模型只能补充解释和建议，不能改写已计算的健康事实。
 
-export const INSIGHT_PROMPT_VERSION = 'v15';
+export const INSIGHT_PROMPT_VERSION = 'v16';
 export const INSIGHT_CAUTION = '健康趋势参考，不构成医疗建议。';
 
-const MAX = { summary: 240, title: 60, reason: 180, action: 240, caution: 100, section: 72 };
+const MAX = { summary: 240, title: 60, reason: 180, action: 240, caution: 100, section: 72, anomaly: 120, factor: 140 };
 
 function text(v, max) {
   if (typeof v !== 'string') return null;
@@ -53,20 +53,23 @@ export function validateInsight(value) {
   };
 }
 
-function shortMap(value, keys) {
-  if (!value || typeof value !== 'object') return null;
-  const out = {};
-  for (const key of keys) {
-    const item = text(value[key], 90);
-    if (!item) return null;
-    out[key] = item;
+function chains(value) {
+  if (!Array.isArray(value) || !value.length || value.length > 3) return null;
+  const out = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') return null;
+    const anomaly = text(item.anomaly, MAX.anomaly);
+    const factor = text(item.factor, MAX.factor);
+    const action = text(item.action, MAX.action);
+    if (!anomaly || !factor || !action) return null;
+    out.push({ anomaly, factor, action });
   }
   return out;
 }
 
 // 周报/月报仍走 validateInsight 的要点列表；日报每段收敛为一句，由 sentence() 校验
 
-// 日报采用“数据卡 + 卡内一句点评”。缺任一段时整体降级到本地规则，避免半份 AI 文案。
+// 日报采用“数据卡 + 卡内一句点评 + 因果建议”。缺任一段时整体降级到本地规则，避免半份 AI 文案。
 export function validateDailyInsight(value) {
   if (!value || typeof value !== 'object') return null;
   // 报告摘要允许两句综合判断与行动方向；仍限制长度，避免挤占数据卡。
@@ -81,15 +84,15 @@ export function validateDailyInsight(value) {
       }
     : null;
   const trend_summary = text(value.trend_summary, 120);
-  const advice = shortMap(value.advice, ['priority', 'watch', 'avoid', 'observe']);
-  if (!summary || !readiness_reason || !sections?.sleep || !sections?.body || !sections?.activity || !sections?.pressure || !trend_summary || !advice) return null;
+  const advice_chains = chains(value.advice_chains);
+  if (!summary || !readiness_reason || !sections?.sleep || !sections?.body || !sections?.activity || !sections?.pressure || !trend_summary || !advice_chains) return null;
   return {
     source: value.source === 'llm' ? 'llm' : 'rules',
     summary,
     readiness_reason,
     sections,
     trend_summary,
-    advice,
+    advice_chains,
     caution: text(value.caution, MAX.caution) || INSIGHT_CAUTION,
   };
 }

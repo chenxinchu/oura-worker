@@ -5,6 +5,8 @@ import { grade, weekdayCN } from './report.js';
 import {
   INK,
   MUTED,
+  METRIC,
+  provenanceChips,
   GREEN,
   RED,
   GRAY,
@@ -38,7 +40,6 @@ const W = {
   sub: '#90939A',
   line: '#E3E5E8',
   neutral: '#AEB4BC',
-  blue: '#AABCCB',
   green: '#659E79',
   red: '#C77C7C',
   amber: '#CFA36C',
@@ -119,19 +120,19 @@ function weeklySummary(p) {
 function weeklyScoreHero(p) {
   const pick = (k) => p.rows.find((r) => r.k === k);
   const period = p.kind === 'monthly' ? '月均' : '周均';
+  const previous = p.kind === 'monthly' ? '较上月' : '较上周';
   const score = (label, key) => {
     const r = pick(key);
-    const color = key === 'sleep' ? W.blue : key === 'readiness' ? W.green : W.amber;
+    const color = key === 'sleep' ? METRIC.sleep : key === 'readiness' ? METRIC.readiness : METRIC.activity;
     const state = p.has_prev && typeof r?.delta === 'number' && r.good !== null
-      ? { color: r.good ? W.green : W.red, text: `${r.delta > 0 ? '↑' : '↓'} ${Math.abs(Math.round(r.delta))}` }
+      ? { color: r.good ? W.green : W.red, text: `${previous} ${r.delta > 0 ? '↑' : '↓'}${Math.abs(Math.round(r.delta))}` }
       : { color: W.sub, text: '—' };
     return `<td width="33.33%" valign="top" style="padding:14px 3px 0;"><div style="background:#ECEEF0;border-radius:14px;padding:10px 8px 9px;"><div style="font-size:34px;font-weight:800;line-height:38px;color:${color};">${
       typeof r?.cur === 'number' ? Math.round(r.cur) : '—'
     }</div><div style="font-size:11px;line-height:16px;color:${W.sub};padding-top:4px;">${label}</div><span style="display:inline-block;margin-top:5px;padding:2px 6px;background:#F4F5F6;border-radius:8px;font-size:10px;line-height:14px;color:${state.color};font-weight:700;">${state.text}</span></div></td>`;
   };
   const summary = p.insight?.source === 'llm' ? p.insight.summary : weeklySummary(p);
-  return weeklyCard(`${weeklyTag('OURA RING · PERIOD REPORT')}<div style="font-size:25px;font-weight:800;line-height:32px;color:${W.ink};letter-spacing:-0.5px;">${p.kind === 'monthly' ? 'Monthly Health Report' : 'Weekly Health Report'}</div>
-    <div style="font-size:12px;line-height:18px;color:${W.sub};padding-top:5px;">${mdy(p.period.start)} – ${mdy(p.period.end)}</div>
+  return weeklyCard(`${weeklyTag('OURA RING · PERIOD REPORT')}<div style="font-size:12px;line-height:18px;color:${W.sub};">统计日期：${mdy(p.period.start)} – ${mdy(p.period.end)}</div>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${score(`${period}睡眠`, 'sleep')}${score(`${period}准备度`, 'readiness')}${score(`${period}活动`, 'activity')}</tr></table>
     <div style="margin-top:13px;border-left:3px solid ${W.green};background:#ECEEF0;border-radius:0 10px 10px 0;padding:10px 11px;font-size:12px;line-height:20px;color:#5F6066;"><span style="font-weight:700;color:${W.title};">一句话总结：</span>${esc(summary)}</div>`);
 }
@@ -183,7 +184,7 @@ function weeklyTrendSummary(p) {
 
 function dailyTrend(p) {
   const labels = { sleep: '睡眠', readiness: '准备度', activity: '活动' };
-  const colors = { sleep: '#91A8C0', readiness: W.green, activity: W.amber };
+  const colors = { sleep: METRIC.sleep, readiness: METRIC.readiness, activity: METRIC.activity };
   const dates = p.cur.per_day;
   const baseline = p.baseline?.avg || {};
   const header = dates.map((d) => `<td align="center" style="font-size:9px;line-height:13px;color:${W.sub};padding:0 1px 4px;">${md(d.day)}</td>`).join('');
@@ -194,7 +195,8 @@ function dailyTrend(p) {
       .map((d) => {
         const value = d[key];
         const width = typeof value === 'number' ? Math.max(24, Math.min(100, value)) : 0;
-        return `<td style="padding:2px;"><div style="height:18px;background:#E7E9EB;border-radius:9px;overflow:hidden;"><div style="width:${width}%;height:18px;background:${colors[key]};border-radius:9px;font-size:9px;font-weight:700;line-height:18px;color:#FFFFFF;text-align:center;">${typeof value === 'number' ? Math.round(value) : ''}</div></div></td>`;
+        const color = typeof value === 'number' && typeof base === 'number' && value < base ? W.neutral : colors[key];
+        return `<td style="padding:2px;"><div style="height:18px;background:#E7E9EB;border-radius:9px;overflow:hidden;"><div style="width:${width}%;height:18px;background:${color};border-radius:9px;font-size:9px;font-weight:700;line-height:18px;color:#FFFFFF;text-align:center;">${typeof value === 'number' ? Math.round(value) : ''}</div></div></td>`;
       })
       .join('')}</tr>`;
   };
@@ -215,8 +217,9 @@ function monthlyTrendSummary(p) {
 }
 
 function monthlyTrend(p) {
-  const colors = { sleep: '#91A8C0', readiness: W.green, activity: W.amber };
+  const colors = { sleep: METRIC.sleep, readiness: METRIC.readiness, activity: METRIC.activity };
   const labels = { sleep: '睡眠', readiness: '准备度', activity: '活动' };
+  const baseline = p.prev?.avg || {};
   const blocks = [];
   for (let index = 0; index < p.cur.per_day.length; index += 7) {
     const days = p.cur.per_day.slice(index, index + 7);
@@ -226,26 +229,38 @@ function monthlyTrend(p) {
     };
     blocks.push({ label: `${md(days[0].day)}–${days[days.length - 1].day.slice(8)}`, sleep: avg('sleep'), readiness: avg('readiness'), activity: avg('activity') });
   }
-  const row = (key) => `<tr><td width="70" style="width:70px;font-size:11px;font-weight:700;line-height:16px;color:${W.title};padding-right:5px;">${labels[key]}<div style="font-size:9px;font-weight:400;color:${W.sub};line-height:13px;">上月参考</div></td>${blocks
+  const row = (key) => {
+    const base = baseline[key];
+    const baseText = typeof base === 'number' ? `上月 ${Math.round(base)}` : '上月参考';
+    return `<tr><td width="70" style="width:70px;font-size:11px;font-weight:700;line-height:16px;color:${W.title};padding-right:5px;">${labels[key]}<div style="font-size:9px;font-weight:400;color:${W.sub};line-height:13px;">${baseText}</div></td>${blocks
     .map((block) => {
       const value = block[key];
       const width = typeof value === 'number' ? Math.max(24, Math.min(100, value)) : 0;
-      return `<td style="padding:2px;"><div style="height:18px;background:#E7E9EB;border-radius:9px;overflow:hidden;"><div style="width:${width}%;height:18px;background:${colors[key]};border-radius:9px;font-size:9px;font-weight:700;line-height:18px;color:#FFFFFF;text-align:center;">${typeof value === 'number' ? Math.round(value) : ''}</div></div></td>`;
+      const color = typeof value === 'number' && typeof base === 'number' && value < base ? W.neutral : colors[key];
+      return `<td style="padding:2px;"><div style="height:18px;background:#E7E9EB;border-radius:9px;overflow:hidden;"><div style="width:${width}%;height:18px;background:${color};border-radius:9px;font-size:9px;font-weight:700;line-height:18px;color:#FFFFFF;text-align:center;">${typeof value === 'number' ? Math.round(value) : ''}</div></div></td>`;
     })
     .join('')}</tr>`;
+  };
   const header = blocks.map((block) => `<td align="center" style="font-size:8px;line-height:13px;color:${W.sub};padding:0 1px 4px;white-space:nowrap;">${block.label}</td>`).join('');
   return weeklyCard(`${weeklyTitle('每周状态趋势')}<div style="height:10px;font-size:0;line-height:0;">&nbsp;</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr><td width="70" style="width:70px;"></td>${header}</tr>${row('sleep')}${row('readiness')}${row('activity')}</table><div style="margin-top:12px;border-left:3px solid ${W.neutral};background:#ECEEF0;border-radius:0 10px 10px 0;padding:10px 11px;font-size:12px;line-height:20px;color:#5F6066;">${monthlyTrendSummary(p)}</div>`);
 }
 
+const STEP_TARGET = 10000;
+
 function weeklyBars(p, key, color, format, outsideZero = false) {
   const values = p.cur.per_day.map((d) => d[key]);
-  const max = Math.max(...values.filter((v) => typeof v === 'number'), 1);
+  const target = key === 'steps' ? STEP_TARGET : null;
+  const max = Math.max(...values.filter((v) => typeof v === 'number'), target || 1);
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${p.cur.per_day
     .map((d, index) => {
       const value = values[index];
       const height = typeof value === 'number' ? Math.max(8, Math.round((value / max) * 46)) : 4;
       const label = typeof value === 'number' ? format(value) : '—';
       const isOutside = outsideZero && typeof value === 'number' && value <= 0;
+      if (target) {
+        const targetColor = typeof value === 'number' && value < target ? '#AEB4BC' : color;
+        return `<td align="center" valign="bottom" style="height:65px;padding:0 2px;"><div style="height:14px;font-size:9px;font-weight:700;line-height:14px;color:${W.ink};">${label}</div><div style="height:${height}px;background:${typeof value === 'number' ? targetColor : '#EDEAF2'};border-radius:8px 8px 3px 3px;font-size:0;line-height:0;">&nbsp;</div><div style="font-size:9px;line-height:13px;color:${W.sub};padding-top:3px;">${md(d.day)}</div></td>`;
+      }
       return `<td align="center" valign="bottom" style="height:65px;padding:0 2px;">${isOutside ? `<div style="height:14px;font-size:9px;font-weight:700;line-height:14px;color:${W.ink};">${label}</div>` : ''}<div style="height:${height}px;background:${typeof value === 'number' ? color : '#EDEAF2'};border-radius:8px 8px 3px 3px;font-size:9px;font-weight:700;line-height:14px;color:${W.ink};">${isOutside ? '&nbsp;' : label}</div><div style="font-size:9px;line-height:13px;color:${W.sub};padding-top:3px;">${md(d.day)}</div></td>`;
     })
     .join('')}</tr></table>`;
@@ -259,11 +274,17 @@ function monthlyBars(p, key, color, format) {
     const value = values.length ? values.reduce((sum, item) => sum + item, 0) / values.length : null;
     blocks.push({ label: `${md(days[0].day)}–${days[days.length - 1].day.slice(8)}`, value });
   }
-  const max = Math.max(...blocks.map((block) => block.value).filter((value) => typeof value === 'number'), 1);
+  const target = key === 'steps' ? STEP_TARGET : null;
+  const max = Math.max(...blocks.map((block) => block.value).filter((value) => typeof value === 'number'), target || 1);
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${blocks
     .map((block) => {
-      const height = typeof block.value === 'number' ? Math.max(8, Math.round((block.value / max) * 46)) : 4;
-      return `<td align="center" valign="bottom" style="height:65px;padding:0 3px;"><div style="height:${height}px;background:${typeof block.value === 'number' ? color : '#EDEAF2'};border-radius:8px 8px 3px 3px;font-size:9px;font-weight:700;line-height:14px;color:${W.ink};">${typeof block.value === 'number' ? format(block.value) : '—'}</div><div style="font-size:8px;line-height:13px;color:${W.sub};padding-top:3px;white-space:nowrap;">${block.label}</div></td>`;
+       const height = typeof block.value === 'number' ? Math.max(8, Math.round((block.value / max) * 46)) : 4;
+       if (target) {
+         const label = typeof block.value === 'number' ? format(block.value) : '—';
+         const targetColor = typeof block.value === 'number' && block.value < target ? '#AEB4BC' : color;
+         return `<td align="center" valign="bottom" style="height:65px;padding:0 3px;"><div style="height:14px;font-size:9px;font-weight:700;line-height:14px;color:${W.ink};">${label}</div><div style="height:${height}px;background:${typeof block.value === 'number' ? targetColor : '#EDEAF2'};border-radius:8px 8px 3px 3px;font-size:0;line-height:0;">&nbsp;</div><div style="font-size:8px;line-height:13px;color:${W.sub};padding-top:3px;white-space:nowrap;">${block.label}</div></td>`;
+       }
+       return `<td align="center" valign="bottom" style="height:65px;padding:0 3px;"><div style="height:${height}px;background:${typeof block.value === 'number' ? color : '#EDEAF2'};border-radius:8px 8px 3px 3px;font-size:9px;font-weight:700;line-height:14px;color:${W.ink};">${typeof block.value === 'number' ? format(block.value) : '—'}</div><div style="font-size:8px;line-height:13px;color:${W.sub};padding-top:3px;white-space:nowrap;">${block.label}</div></td>`;
     })
     .join('')}</tr></table>`;
 }
@@ -298,23 +319,79 @@ function weeklyCardSummary(p, type) {
   return `${tagLead}${period}活动、恢复和日常节奏配合平稳；${next}按现在的强度推进，并持续给身体保留缓冲。`;
 }
 
+const SLEEP_TARGET = 7 * 3600;
+
+function sleepClock(value) {
+  if (typeof value !== 'number' || value < 0) return '—';
+  // 达标判定精确到秒；显示向下取整分钟，避免 6:59 被显示为 7:00。
+  const minutes = Math.floor(value / 60);
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+function sleepTargetProgress(items) {
+  const values = items.map((item) => item.value).filter((value) => typeof value === 'number');
+  return { met: values.filter((value) => value >= SLEEP_TARGET).length, total: items.length, known: values.length };
+}
+
+function sleepTargetCells(items) {
+  const width = (100 / items.length).toFixed(2);
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${items.map((item, index) => {
+    const met = typeof item.value === 'number' && item.value >= SLEEP_TARGET;
+    const hasValue = typeof item.value === 'number';
+    const bg = met ? '#EDE9FE' : '#ECEEF0';
+    const color = met ? '#7C6BD6' : W.sub;
+    return `<td width="${width}%" valign="top" style="padding:${index ? '0 0 0 4px' : '0 4px 0 0'};"><div style="background:${bg};border-radius:12px;padding:10px 4px 9px;text-align:center;"><div style="font-size:11px;font-weight:700;line-height:15px;color:${color};">${item.label}</div><div style="font-size:16px;font-weight:800;line-height:22px;color:${color};padding-top:2px;">${hasValue ? sleepClock(item.value) : '—'}</div></div></td>`;
+  }).join('')}</tr></table>`;
+}
+
+function sleepTargetSummary(p, items) {
+  const current = sleepTargetProgress(items);
+  const previousItems = p.kind === 'monthly'
+    ? sleepTargetWeeks(p.prev?.per_day || [])
+    : (p.prev?.per_day || []).map((day) => ({ value: day.total_sleep }));
+  const previous = sleepTargetProgress(previousItems);
+  const unit = p.kind === 'monthly' ? '周' : '天';
+  const coverage = current.known < current.total ? `，${current.total - current.known}${unit}无记录` : '';
+  if (!p.has_prev || previous.known === 0) return `本期 ${current.met}/${current.total}${unit} 达标${coverage}。`;
+  const delta = current.met - previous.met;
+  const deltaText = delta === 0 ? '与上期持平' : `较${p.kind === 'monthly' ? '上月' : '上周'}${delta > 0 ? '多' : '少'} ${Math.abs(delta)}${unit}`;
+  return `本期 ${current.met}/${current.total}${unit} 达标，${deltaText}${coverage}。`;
+}
+
+function sleepTargetWeeks(days) {
+  const weeks = [];
+  for (let index = 0; index < days.length; index += 7) {
+    const group = days.slice(index, index + 7);
+    const values = group.map((day) => day.total_sleep).filter((value) => typeof value === 'number');
+    weeks.push({
+      label: `第${weeks.length + 1}周`,
+      value: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null,
+    });
+  }
+  return weeks;
+}
+
 function weeklySleepAndRecovery(p) {
   const sleep = p.cur.avg.total_sleep;
   const hrv = p.cur.avg.hrv;
   const debt = p.cur.avg.sleep_debt;
   const debtLabel = p.kind === 'monthly' ? '月睡眠负债' : '周睡眠负债';
+  const targetItems = p.kind === 'monthly'
+    ? sleepTargetWeeks(p.cur.per_day)
+    : p.cur.per_day.map((day) => ({ label: weekdayCN(day.day).slice(1), value: day.total_sleep }));
+  const targetTitle = p.kind === 'monthly' ? '每周平均睡眠达标' : '本周睡眠达标日历（≥7h）';
   return weeklyCard(`${weeklyTitle('睡眠与恢复', '这一周怎么过来的')}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
       <td width="33.33%" valign="top" style="padding:10px 4px 0 0;"><div style="background:#ECEEF0;border-radius:15px;padding:12px 10px;box-shadow:inset 1px 1px 3px rgba(144,150,158,0.07);"><div style="font-size:11px;color:${W.sub};line-height:16px;">平均睡眠时长</div><div style="font-size:23px;font-weight:800;color:${W.ink};line-height:29px;">${fmtVal('dur', sleep)}</div>${weeklyDeltaPill(p, 'total_sleep')}</div></td>
       <td width="33.33%" valign="top" style="padding:10px 2px;"><div style="background:#ECEEF0;border-radius:15px;padding:12px 10px;box-shadow:inset 1px 1px 3px rgba(144,150,158,0.07);"><div style="font-size:11px;color:${W.sub};line-height:16px;">恢复信号</div><div style="font-size:23px;font-weight:800;color:${W.ink};line-height:29px;">${typeof hrv === 'number' ? Math.round(hrv) + ' ms' : '—'}</div>${weeklyDeltaPill(p, 'hrv')}</div></td>
       <td width="33.33%" valign="top" style="padding:10px 0 0 4px;"><div style="background:#ECEEF0;border-radius:15px;padding:12px 10px;box-shadow:inset 1px 1px 3px rgba(144,150,158,0.07);"><div style="font-size:11px;color:${W.sub};line-height:16px;">${debtLabel}</div><div style="font-size:23px;font-weight:800;color:${W.ink};line-height:29px;">${fmtVal('dur0', debt)}</div>${weeklyDeltaPill(p, 'sleep_debt')}</div></td>
-    </tr></table><div style="font-size:11px;font-weight:700;line-height:16px;color:${W.title};padding:14px 0 4px;">${p.kind === 'monthly' ? '每周平均睡眠时长' : '每日睡眠时长'}</div>${p.kind === 'monthly' ? monthlyBars(p, 'total_sleep', W.blue, (v) => (v / 3600).toFixed(1) + 'h') : weeklyBars(p, 'total_sleep', W.blue, (v) => (v / 3600).toFixed(1) + 'h')}<div style="margin-top:12px;border-left:3px solid ${W.blue};background:#ECEEF0;border-radius:0 10px 10px 0;padding:10px 11px;font-size:12px;line-height:20px;color:#5F6066;">${esc(weeklyCardSummary(p, 'sleep'))}</div>`);
+    </tr></table><div style="font-size:11px;font-weight:700;line-height:16px;color:${W.title};padding:14px 0 7px;">${targetTitle}</div>${sleepTargetCells(targetItems)}<div style="margin-top:12px;border-left:3px solid ${METRIC.sleep};background:#ECEEF0;border-radius:0 10px 10px 0;padding:10px 11px;font-size:12px;line-height:20px;color:#5F6066;">${sleepTargetSummary(p, targetItems)}</div>`);
 }
 
 function weeklyActivity(p) {
   return weeklyCard(`${weeklyTitle('活动节奏', '走动、消耗和留白')}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
       <td width="50%" style="padding:10px 7px 0 0;"><div style="background:#ECEEF0;border-radius:15px;padding:12px;box-shadow:inset 1px 1px 3px rgba(144,150,158,0.07);"><div style="font-size:11px;color:${W.sub};line-height:16px;">日均步数</div><div style="font-size:25px;font-weight:800;color:${W.ink};line-height:31px;">${typeof p.cur.avg.steps === 'number' ? Math.round(p.cur.avg.steps).toLocaleString('en-US') : '—'}</div>${weeklyDeltaPill(p, 'steps')}</div></td>
       <td width="50%" style="padding:10px 0 0 7px;"><div style="background:#ECEEF0;border-radius:15px;padding:12px;box-shadow:inset 1px 1px 3px rgba(144,150,158,0.07);"><div style="font-size:11px;color:${W.sub};line-height:16px;">日均活动消耗</div><div style="font-size:25px;font-weight:800;color:${W.ink};line-height:31px;">${fmtVal('int', p.cur.avg.active_cal, 'kcal')}</div>${weeklyDeltaPill(p, 'active_cal')}</div></td>
-    </tr></table><div style="font-size:11px;font-weight:700;line-height:16px;color:${W.title};padding:14px 0 4px;">${p.kind === 'monthly' ? '每周平均步数' : '每日步数'}</div>${p.kind === 'monthly' ? monthlyBars(p, 'steps', W.amber, (v) => Math.round(v / 1000) + 'k') : weeklyBars(p, 'steps', W.amber, (v) => Math.round(v / 1000) + 'k', true)}<div style="margin-top:12px;border-left:3px solid ${W.amber};background:#ECEEF0;border-radius:0 10px 10px 0;padding:10px 11px;font-size:12px;line-height:20px;color:#5F6066;">${esc(weeklyCardSummary(p, 'activity'))}</div>`);
+    </tr></table><div style="font-size:11px;font-weight:700;line-height:16px;color:${W.title};padding:14px 0 4px;">${p.kind === 'monthly' ? '每周平均步数' : '每日步数'}</div>${p.kind === 'monthly' ? monthlyBars(p, 'steps', METRIC.activity, (v) => Math.round(v / 1000) + 'k') : weeklyBars(p, 'steps', METRIC.activity, (v) => Math.round(v / 1000) + 'k', true)}<div style="margin-top:12px;border-left:3px solid ${METRIC.activity};background:#ECEEF0;border-radius:0 10px 10px 0;padding:10px 11px;font-size:12px;line-height:20px;color:#5F6066;">${esc(weeklyCardSummary(p, 'activity'))}</div>`);
 }
 
 function weeklyPressureSummary(p) {
@@ -403,6 +480,17 @@ function weeklyActions(p) {
   return weeklyCard(`${weeklyTitle('三条可执行的行动')}<div style="height:12px;font-size:0;line-height:0;">&nbsp;</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${cells}</tr></table>`);
 }
 
+function periodProvenance(p) {
+  const baseline = p.kind === 'weekly'
+    ? p.baseline ? '前 21 天个人基线' : '基线积累中'
+    : p.has_prev ? '上月均值' : '上月数据不足';
+  return provenanceChips([
+    { label: '数据源', text: 'Oura Cloud API v2' },
+    { label: '统计区间', text: `${md(p.period.start)}–${md(p.period.end)}` },
+    { label: '基线口径', text: baseline },
+  ]);
+}
+
 function renderPeriodDashboard(p) {
   const pick = (k) => p.rows.find((r) => r.k === k);
   const isMonth = p.kind === 'monthly';
@@ -418,8 +506,9 @@ function renderPeriodDashboard(p) {
     weeklySnapshot(p),
     weeklyStory(p),
     weeklyActions(p),
+    periodProvenance(p),
     weeklySignoff(),
-    `<tr><td align="center" style="padding:6px 0 0;font-size:10px;color:#AAA5B3;line-height:17px;">数据来源 Oura Cloud API v2 · 统计区间 ${p.period.start} – ${p.period.end}</td></tr>`,
+    `<tr><td align="center" style="padding:6px 0 0;font-size:10px;color:#AAA5B3;line-height:17px;">由 Cloudflare Worker 自动生成</td></tr>`,
   ].join('');
   const preheader = `睡眠 ${Math.round(pick('sleep').cur ?? 0)} · 准备度 ${Math.round(pick('readiness').cur ?? 0)} · 活动 ${Math.round(pick('activity').cur ?? 0)}`;
   return { subject: `${isMonth ? 'Monthly' : 'Weekly'} Health Report · Jarvis (Oura Clone)`, html: weeklyShell(preheader, body), text: renderPeriodText(p) };
@@ -469,9 +558,9 @@ function scoreRow(p) {
     </td>`;
   };
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
-    ${cell('睡眠', pick('sleep'), '#7c5cff')}
-    ${cell('准备度', pick('readiness'), GREEN)}
-    ${cell('活动', pick('activity'), '#0ea5e9')}
+    ${cell('睡眠', pick('sleep'), METRIC.sleep)}
+    ${cell('准备度', pick('readiness'), METRIC.readiness)}
+    ${cell('活动', pick('activity'), METRIC.activity)}
   </tr></table>`;
 }
 
