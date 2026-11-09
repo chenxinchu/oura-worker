@@ -48,10 +48,10 @@ const W = {
 function weeklyShell(preheader, body) {
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weekly Health Report</title></head>
-<body style="margin:0;padding:0;background:${W.bg};">
+ <body style="margin:0;padding:0;background:${W.bg};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;text-size-adjust:100%;">
 <div style="display:none;font-size:1px;color:${W.bg};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</div>
-<div style="background:${W.bg};padding:22px 10px 30px 10px;">
-  <div style="max-width:600px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',Arial,sans-serif;">
+ <div style="background:${W.bg};padding:22px 10px 30px 10px;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;text-size-adjust:100%;">
+   <div style="max-width:600px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',Arial,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;text-size-adjust:100%;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;">${body}</table>
   </div>
 </div></body></html>`;
@@ -335,7 +335,7 @@ function sleepTargetProgress(items) {
 
 function sleepTargetCells(items) {
   const width = (100 / items.length).toFixed(2);
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${items.map((item, index) => {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;text-size-adjust:100%;"><tr>${items.map((item, index) => {
     const met = typeof item.value === 'number' && item.value >= SLEEP_TARGET;
     const hasValue = typeof item.value === 'number';
     const bg = met ? '#EDE9FE' : '#ECEEF0';

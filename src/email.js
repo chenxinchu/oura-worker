@@ -61,44 +61,36 @@ function noteLine(text, color = D.sub) {
   return `<div style="padding-top:9px;font-size:12px;line-height:18px;color:${color};"><b style="color:${D.title};">综合解读：</b>${esc(text)}</div>`;
 }
 
-function scoreCard({ label, color, score, baseText, tag, featured = false }) {
+function scoreCard({ label, color, score, baseText, tag, featured = false, reason = '' }) {
   const statusColor = color;
-  const skin = featured ? 'background:#ECFDF5;border:1px solid #A7F3D0;' : 'background:#F7F7F9;';
-  const badge = featured ? '<span style="display:inline-block;margin-left:5px;padding:1px 5px;background:#D1FAE5;border-radius:7px;font-size:9px;font-weight:700;line-height:13px;color:#059669;vertical-align:1px;">今日重点</span>' : '';
-  return `<td width="32%" valign="top" style="padding:0;">
+  const skin = 'background:#F7F7F9;';
+  const align = featured ? ' align="center"' : '';
+  return `<td${featured ? '' : ' width="49%"'} valign="top" style="padding:0;">
     <div style="${skin}border-radius:14px;padding:12px 12px 11px 12px;">
-    <div style="font-size:11px;color:${D.sub};line-height:15px;">
+    <div${align} style="font-size:11px;color:${D.sub};line-height:15px;">
       <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${statusColor};margin-right:5px;vertical-align:1px;"></span>${label}
-      ${badge}
     </div>
-    <div style="padding-top:5px;line-height:38px;white-space:nowrap;">
+    <div${align} style="padding-top:5px;line-height:${featured ? '52px' : '38px'};white-space:nowrap;">
       <span style="font-size:34px;font-weight:800;color:${statusColor};letter-spacing:-.5px;">${
         typeof score === 'number' ? Math.round(score) : '—'
       }</span>
     </div>
-    <div style="font-size:10px;color:${D.sub};line-height:14px;">${baseText}${
+    <div${align} style="font-size:10px;color:${D.sub};line-height:14px;">${baseText}${
       tag ? `<span style="margin-left:5px;">${tag}</span>` : ''
     }</div>
+    ${reason}
     </div>
   </td>`;
 }
 
 function readinessReason(p) {
   const reason = p.insight?.readiness_reason || '准备度和最近一周接近';
-  return `<div style="margin-top:12px;border-left:3px solid ${METRIC.readiness};background:#ECFDF5;border-radius:0 10px 10px 0;padding:10px 11px;font-size:12px;line-height:18px;color:${D.title};text-align:left;"><b style="color:#059669;">准备度归因：</b>${esc(reason)}</div>`;
+  return `<div style="margin-top:12px;padding-top:10px;border-top:1px solid #A7F3D0;font-size:12px;line-height:18px;color:${D.title};text-align:left;"><b style="color:#059669;">准备度归因：</b>${esc(reason)}</div>`;
 }
 
 function scoreTriplet(p) {
   const cmp = p.base_cmp || {};
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
-    ${scoreCard({
-      label: '睡眠',
-      color: METRIC.sleep,
-      score: p.sleep_score,
-      baseText: baseline(p, 'sleep'),
-      tag: deltaInline(cmp.sleep),
-    })}
-    <td width="2%"></td>
     ${scoreCard({
       label: '准备度',
       color: METRIC.readiness,
@@ -106,6 +98,17 @@ function scoreTriplet(p) {
       baseText: baseline(p, 'readiness'),
       tag: deltaWarn(cmp.readiness, true),
       featured: true,
+      reason: readinessReason(p),
+    })}
+  </tr></table>
+  <div style="height:12px;font-size:0;line-height:0;">&nbsp;</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>
+    ${scoreCard({
+      label: '睡眠',
+      color: METRIC.sleep,
+      score: p.sleep_score,
+      baseText: baseline(p, 'sleep'),
+      tag: deltaInline(cmp.sleep),
     })}
     <td width="2%"></td>
     ${scoreCard({
@@ -298,8 +301,8 @@ export function renderEmail(p) {
     letterHead('I have processed and compiled your physiological data captured overnight by Oura for this health briefing.'),
     header,
     p.insight ? card(`<div style="border-left:3px solid ${riskColor};padding-left:10px;font-size:13px;line-height:22px;color:#374151;"><b style="color:${riskColor};">报告摘要：</b>${esc(p.insight.summary)}</div>`, '14px 16px', 'soft') : '',
-    // 准备度主卡：唯一的大数字，睡眠与活动降为卡内附属
-    card(`${scoreTriplet(p)}${readinessReason(p)}`, '18px 18px 16px 18px', 'soft'),
+    // 准备度独占主卡，睡眠和活动在下方并列，归因固定在主卡内左对齐。
+    card(scoreTriplet(p), '18px 18px 16px 18px', 'soft'),
     card(
       `${plainTitle('昨夜睡眠')}${sleepBar(d, cmp)}<div style="height:12px;font-size:0;line-height:0;">&nbsp;</div>${metricGrid(sleepMetrics)}${noteLine(p.insight?.sections?.sleep)}`,
       '18px 18px 16px 18px',

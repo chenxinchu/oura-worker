@@ -48,7 +48,7 @@ if (p.insight.advice_chains.length !== 3) throw new Error('日报必须生成三
 const daily = renderEmail(p);
 out('preview.html', daily.html);
 out('preview.txt', daily.text);
-if (!daily.html.includes('今日重点') || !daily.html.includes('准备度归因：')) throw new Error('日报未突出准备度重点');
+if (!daily.html.includes('准备度归因：') || daily.html.includes('今日重点')) throw new Error('日报准备度主卡样式不正确');
 
 // 动态标签场景：确认「宝宝夜醒频繁」不会被写成自主熬夜或失眠。
 const rawTagged = demoRaw(9, today);
