@@ -449,7 +449,7 @@ function weeklyStory(p) {
     .map((item, index) => {
       const last = index === items.length - 1;
       return `<tr>
-        <td width="72" valign="top" align="right" style="width:72px;padding:2px 10px 14px 0;font-size:11px;font-weight:700;line-height:18px;color:${W.sub};">${md(item.day)}（${weekdayCN(item.day)}）</td>
+        <td width="80" valign="top" align="right" style="width:80px;padding:2px 2px 14px 0;font-size:11px;font-weight:700;line-height:18px;color:${W.sub};">${md(item.day)}（${weekdayCN(item.day)}）</td>
         <td width="26" valign="top" align="center" style="width:26px;padding:2px 0 0;"><div style="width:10px;height:10px;background:#F4F5F6;border:2px solid ${W.green};border-radius:10px;font-size:0;line-height:0;">&nbsp;</div>${last ? '' : '<div style="width:1px;height:57px;background:#D9DDE1;margin:0 auto;"></div>'}</td>
         <td valign="top" style="padding:0 0 14px 10px;"><div style="font-size:13px;font-weight:800;line-height:19px;color:${W.title};">${esc(item.title)}</div><div style="font-size:11px;line-height:18px;color:#666A71;padding-top:3px;">${esc(item.reason)}</div></td>
       </tr>`;
